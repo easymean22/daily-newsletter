@@ -1,0 +1,70 @@
+# ===== Gradle =====
+.gradle/
+build/
+**/build/
+!gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ===== Kotlin =====
+.kotlin/
+
+# ===== Android =====
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Captures (Android Studio profiler)
+captures/
+
+# ===== IDE: IntelliJ / Android Studio =====
+# 개인 상태만 제외, 공유 설정(codeStyles 등)은 포함할 수 있도록 선택적으로 처리
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/usage.statistics.xml
+.idea/shelf/
+.idea/dictionaries/
+.idea/httpRequests/
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/*.iml
+.idea/deploymentTargetSelector.xml
+.idea/deploymentTargetDropDown.xml
+.idea/assetWizardSettings.xml
+.idea/navEditor.xml
+.idea/jarRepositories.xml
+
+# 확실히 로컬인 IntelliJ 모듈 파일
+*.iml
+*.ipr
+*.iws
+
+# ===== IDE: Eclipse / VS Code (선제) =====
+.classpath
+.project
+.settings/
+.vscode/
+
+# ===== 서명 / 시크릿 (선제 차단) =====
+*.keystore
+*.jks
+keystore.properties
+secrets.properties
+*.env
+.env
+.env.*
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== 로그 / 임시 =====
+*.log
+*.tmp
+hs_err_pid*
+replay_pid*
+
+# ===== Node (혹시 도구 도입 대비, 선제) =====
+node_modules/

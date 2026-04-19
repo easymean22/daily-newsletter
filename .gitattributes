@@ -1,0 +1,19 @@
+# macOS/Linux/Windows 간 줄바꿈 정규화
+* text=auto eol=lf
+
+# Gradle wrapper 스크립트는 LF 고정
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Windows 배치 파일은 CRLF 고정
+*.bat text eol=crlf
+
+# 바이너리로 명시 (줄바꿈 변환 방지)
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.keystore binary
+*.jks binary
