@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/chloe.aka/PrivateProject/daily-newsletter/**)",
+      "Glob(//Users/chloe.aka/PrivateProject/daily-newsletter/**)",
+      "Grep(//Users/chloe.aka/PrivateProject/daily-newsletter/**)",
+      "Edit(//Users/chloe.aka/PrivateProject/daily-newsletter/docs/**)",
+      "Write(//Users/chloe.aka/PrivateProject/daily-newsletter/docs/**)"
+    ]
+  }
+}

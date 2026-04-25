@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Daily Newsletter</string>
+    <string name="nav_keywords">키워드</string>
+    <string name="nav_topics">주제</string>
+    <string name="nav_newsletter">뉴스레터</string>
+    <string name="nav_settings">설정</string>
+</resources>
