@@ -12,7 +12,7 @@ data class SettingsEntity(
     companion object {
         const val KEY_NOTION_API_KEY = "notion_api_key"
         const val KEY_NOTION_PARENT_PAGE_ID = "notion_parent_page_id"
-        const val KEY_CLAUDE_API_KEY = "claude_api_key"
+        const val KEY_GEMINI_API_KEY = "gemini_api_key"
         const val KEY_PRINTER_IP = "printer_ip"
         const val KEY_PRINTER_EMAIL = "printer_email"
         const val KEY_PRINT_TIME_HOUR = "print_time_hour"

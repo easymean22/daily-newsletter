@@ -1,7 +1,7 @@
 package com.dailynewsletter.di
 
 import com.dailynewsletter.BuildConfig
-import com.dailynewsletter.data.remote.claude.ClaudeApi
+import com.dailynewsletter.data.remote.gemini.GeminiApi
 import com.dailynewsletter.data.remote.notion.NotionApi
 import dagger.Module
 import dagger.Provides
@@ -47,10 +47,10 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    @Named("claude")
-    fun provideClaudeRetrofit(client: OkHttpClient): Retrofit =
+    @Named("gemini")
+    fun provideGeminiRetrofit(client: OkHttpClient): Retrofit =
         Retrofit.Builder()
-            .baseUrl("https://api.anthropic.com/")
+            .baseUrl("https://generativelanguage.googleapis.com/")
             .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
@@ -62,6 +62,6 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideClaudeApi(@Named("claude") retrofit: Retrofit): ClaudeApi =
-        retrofit.create(ClaudeApi::class.java)
+    fun provideGeminiApi(@Named("gemini") retrofit: Retrofit): GeminiApi =
+        retrofit.create(GeminiApi::class.java)
 }

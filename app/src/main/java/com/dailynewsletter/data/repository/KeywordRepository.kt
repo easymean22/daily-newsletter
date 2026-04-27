@@ -2,6 +2,7 @@ package com.dailynewsletter.data.repository
 
 import com.dailynewsletter.data.local.entity.SettingsEntity
 import com.dailynewsletter.data.remote.notion.*
+import com.dailynewsletter.data.tag.TagNormalizer
 import com.dailynewsletter.ui.keyword.KeywordUiItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,22 +47,25 @@ class KeywordRepository @Inject constructor(
             val type = page.properties["Type"]?.select?.name ?: "keyword"
             val status = page.properties["Status"]?.select?.name ?: "pending"
             val resolvedDate = page.properties["Resolved Date"]?.date?.start
+            val tags = page.properties["Tags"]?.multiSelect?.mapNotNull { it.name } ?: emptyList()
 
             KeywordUiItem(
                 id = page.id,
                 title = title,
                 type = type,
                 isResolved = status == "resolved",
-                resolvedDate = resolvedDate
+                resolvedDate = resolvedDate,
+                tags = tags
             )
         }
     }
 
-    suspend fun addKeyword(text: String, type: String) {
+    suspend fun addKeyword(text: String, type: String, tags: List<String>): KeywordUiItem {
         val auth = getAuth()
         val dbId = getDbId()
+        val normalizedTags = TagNormalizer.ensureFreeTopicTag(tags)
 
-        notionApi.createPage(
+        val page = notionApi.createPage(
             auth = auth,
             request = CreatePageRequest(
                 parent = NotionParent(type = "database_id", databaseId = dbId),
@@ -77,12 +81,26 @@ class KeywordRepository @Inject constructor(
                     "Status" to NotionPropertyValue(
                         type = "select",
                         select = NotionSelectValue("pending")
+                    ),
+                    "Tags" to NotionPropertyValue(
+                        type = "multi_select",
+                        multiSelect = normalizedTags.map { NotionMultiSelectValue(name = it) }
                     )
                 )
             )
         )
 
+        val newItem = KeywordUiItem(
+            id = page.id,
+            title = text,
+            type = type,
+            isResolved = false,
+            resolvedDate = null,
+            tags = normalizedTags
+        )
+
         refreshKeywords()
+        return newItem
     }
 
     suspend fun deleteKeyword(id: String) {

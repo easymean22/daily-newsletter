@@ -23,10 +23,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +46,16 @@ fun TopicsScreen(viewModel: TopicsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var editingTopic by remember { mutableStateOf<TopicUiItem?>(null) }
     var editText by remember { mutableStateOf("") }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Observe error state and show snackbar
+    LaunchedEffect(state.error) {
+        val errorMsg = state.error
+        if (!errorMsg.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(errorMsg)
+            viewModel.clearError()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -54,7 +67,8 @@ fun TopicsScreen(viewModel: TopicsViewModel = hiltViewModel()) {
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         when {
             state.isLoading -> {

@@ -67,8 +67,16 @@ data class NotionFilter(
     val select: NotionSelectFilter? = null,
     @SerializedName("multi_select") val multiSelect: NotionMultiSelectFilter? = null,
     val date: NotionDateFilter? = null,
+    val number: NotionNumberFilter? = null,
     val and: List<NotionFilter>? = null,
     val or: List<NotionFilter>? = null
+)
+
+data class NotionNumberFilter(
+    val equals: Double? = null,
+    @SerializedName("does_not_equal") val doesNotEqual: Double? = null,
+    @SerializedName("greater_than") val greaterThan: Double? = null,
+    @SerializedName("less_than") val lessThan: Double? = null
 )
 
 data class NotionSelectFilter(
@@ -150,6 +158,7 @@ data class UpdatePageRequest(
 data class NotionBlock(
     val type: String,
     val paragraph: NotionParagraphBlock? = null,
+    val heading_1: NotionHeadingBlock? = null,
     val heading_2: NotionHeadingBlock? = null,
     val heading_3: NotionHeadingBlock? = null,
     val bulleted_list_item: NotionListItemBlock? = null
@@ -165,6 +174,13 @@ data class NotionHeadingBlock(
 
 data class NotionListItemBlock(
     @SerializedName("rich_text") val richText: List<NotionRichText>
+)
+
+// Block children response
+data class NotionBlocksResponse(
+    val results: List<NotionBlock>,
+    @SerializedName("has_more") val hasMore: Boolean = false,
+    @SerializedName("next_cursor") val nextCursor: String? = null
 )
 
 // Database response

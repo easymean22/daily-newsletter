@@ -20,7 +20,7 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun getNotionApiKey(): String? = get(SettingsEntity.KEY_NOTION_API_KEY)
-    suspend fun getClaudeApiKey(): String? = get(SettingsEntity.KEY_CLAUDE_API_KEY)
+    suspend fun getGeminiApiKey(): String? = get(SettingsEntity.KEY_GEMINI_API_KEY)
     suspend fun getPrinterIp(): String? = get(SettingsEntity.KEY_PRINTER_IP)
     suspend fun getPrinterEmail(): String? = get(SettingsEntity.KEY_PRINTER_EMAIL)
     suspend fun getNewsletterPages(): Int = get(SettingsEntity.KEY_NEWSLETTER_PAGES)?.toIntOrNull() ?: 2

@@ -2,7 +2,7 @@
 updated: 2026-04-26
 status: accepted
 owner: planner
-summary: "Snapshot of what is implemented vs unimplemented vs broken, the open intent questions, and the next planning candidates."
+summary: "Snapshot of what is implemented vs unimplemented vs broken, the open intent questions, and the next planning candidates. (Round-1 plan sweep done 2026-04-26.)"
 refs:
   - docs/specs/mvp.md
   - docs/context/project-map.md
@@ -117,11 +117,11 @@ Recommendations are ordered by **how much they unblock the 1-day E2E**, not by c
 
 | # | Candidate | Why it earns priority |
 |---|---|---|
-| 1 | **Round-1 reflection sweep on the 4 active plans** — re-edit (or supersede) `tag-system`, `topic-generation-paths`, `newsletter-shelf`, `weekday-print-slots` so their bodies match the round-1 rules in spec §3 (no "shelf" vocabulary; `자유주제 → 모든주제`; Claude not involved in tags; single-slot MVP). Until this sweep lands, all per-plan open questions are mis-targeted. | Unblocks 4 plans in one motion. |
-| 2 | **`PrintWorker` enqueue-vs-input-data mismatch** — decide whether MVP keeps any periodic auto-print at all (the spec's user-driven model implies no) or whether the print path is **explicitly user/print-time triggered with `newsletter_id` provided**. Today the auto path is silently broken. | Removes a silent failure mode that would derail any 1-day E2E rehearsal. |
+| 1 | ~~**Round-1 reflection sweep on the 4 active plans**~~ → **done 2026-04-26**: 4개 plan README + ADR-0003 v3 / ADR-0005 (accepted) / ADR-0006 (단일 슬롯 scope 명확화) 라운드 1 정합 완료. sub-files(01-XX 등) 옛 어휘 잔여는 README의 라운드 1 callout으로 갈음. 폴더명 `newsletter-shelf/`와 ADR 파일명 `0005-newsletter-shelf-lazy-generation.md`는 sweep scope 밖이라 유지. 다음 후보는 #2 (PrintWorker 입력 데이터 미스매치). | Unblocks 4 plans in one motion. |
+| 2 | ~~**`PrintWorker` enqueue-vs-input-data mismatch**~~ → **done 2026-04-26** (TASK-002): `WorkScheduler.schedulePrint` 제거(22줄). spec §3 사용자 행동 트리거 모델 채택. 자동 주기 인쇄는 newsletter-shelf + weekday-print-slots plan이 `PrintOrchestrator` 도입 시점에 재배선. 빌드 검증은 `SKIPPED_ENVIRONMENT_NOT_AVAILABLE`(로컬 Java 미설치) — 다른 환경에서 verifier 재시도 권장. | Removes a silent failure mode that would derail any 1-day E2E rehearsal. |
 | 3 | **MVP "reset Notion DBs / re-run setup" flow as a spec item** — required to land tag-system schema migrations cleanly. Currently no flow; users have to manually trash pages. | Migration ergonomics for tag-system + any future schema move. |
 | 4 | **`release-hardening` plan creation** — collect the 4 known infra notes (full-body logging, Claude cost guidance, Notion token logging, onboarding errors) into one plan with a defined trigger ("public release milestone"). | Keeps the MVP scope clean while preventing these from rotting in plan footnotes. |
-| 5 | **1-day E2E rehearsal spec** — handoff #8 from spec §8 was not split into a plan yet. It is the only plan whose existence forces the other plans to compose correctly. | Acts as the integration acceptance for the round-1 plan rewrites. |
+| 5 | ~~**1-day E2E rehearsal spec**~~ → **draft 2026-04-26**: `docs/plans/e2e-rehearsal/README.md` 1차 작성. 8단계 시나리오 + 선행 plan 매핑 + 실패 롤백 매핑 + 사용자 확인 5개. 선행 4개 plan(tag-system/topic-generation-paths/newsletter-shelf/weekday-print-slots)의 핵심 단계 완료 후 1차 시도. | Acts as the integration acceptance for the round-1 plan rewrites. |
 | 6 | **CleanupWorker fate** — spec §3 says it is "outside MVP judgment scope" but the worker is still scheduled and could run during the 1-day rehearsal and surprise the user. Decide: leave wired, leave wired but disabled, or remove. | Removes a wildcard during E2E. |
 | 7 | **Multi-slot promotion criterion** — spec deferred multi-slot to "공개 배포 마일스톤". A short note on what evidence promotes it (e.g. "the single-slot E2E has been observed to succeed 7 days in a row") would prevent ambiguity later. | Makes the future trigger explicit. |
 

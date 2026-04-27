@@ -45,6 +45,13 @@ interface NotionApi {
         @Path("blockId") blockId: String
     )
 
+    @GET("v1/pages/{pageId}")
+    suspend fun getPage(
+        @Header("Authorization") auth: String,
+        @Header("Notion-Version") version: String = "2022-06-28",
+        @Path("pageId") pageId: String
+    ): NotionPage
+
     @GET("v1/blocks/{blockId}/children")
     suspend fun getBlockChildren(
         @Header("Authorization") auth: String,
@@ -52,5 +59,5 @@ interface NotionApi {
         @Path("blockId") blockId: String,
         @Query("start_cursor") startCursor: String? = null,
         @Query("page_size") pageSize: Int = 100
-    ): NotionQueryResponse
+    ): NotionBlocksResponse
 }

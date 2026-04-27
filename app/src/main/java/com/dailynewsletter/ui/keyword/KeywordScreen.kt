@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -25,11 +28,14 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -38,7 +44,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -56,6 +64,32 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
     var showAddSheet by remember { mutableStateOf(false) }
     var newText by remember { mutableStateOf("") }
     var newType by remember { mutableStateOf("keyword") }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Observe error state and show snackbar
+    LaunchedEffect(state.error) {
+        val errorMsg = state.error
+        if (!errorMsg.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(errorMsg)
+            viewModel.clearError()
+        }
+    }
+
+    // Observe autoGenStatus and show snackbar
+    LaunchedEffect(state.autoGenStatus) {
+        when (val status = state.autoGenStatus) {
+            is AutoGenStatus.Running -> snackbarHostState.showSnackbar("주제 생성 중...")
+            is AutoGenStatus.Success -> {
+                snackbarHostState.showSnackbar("주제 ${status.count}개가 생성되었습니다")
+                viewModel.clearAutoGenStatus()
+            }
+            is AutoGenStatus.Failed -> {
+                snackbarHostState.showSnackbar(status.message)
+                viewModel.clearAutoGenStatus()
+            }
+            is AutoGenStatus.Idle -> Unit
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -73,7 +107,8 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
             FloatingActionButton(onClick = { showAddSheet = true }) {
                 Icon(Icons.Default.Add, contentDescription = "추가")
             }
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         if (state.keywords.isEmpty()) {
             Box(
@@ -135,11 +170,16 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
     }
 
     if (showAddSheet) {
+        val newTags = remember { mutableStateListOf<String>() }
+        var tagInput by remember { mutableStateOf("") }
+
         ModalBottomSheet(
             onDismissRequest = {
                 showAddSheet = false
                 newText = ""
                 newType = "keyword"
+                newTags.clear()
+                tagInput = ""
             },
             sheetState = rememberModalBottomSheetState()
         ) {
@@ -159,6 +199,20 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
 
                 TypeSelector(selected = newType, onSelect = { newType = it })
 
+                TagInput(
+                    tags = newTags,
+                    tagInput = tagInput,
+                    onTagInputChange = { tagInput = it },
+                    onAddTag = {
+                        val trimmed = tagInput.trim()
+                        if (trimmed.isNotEmpty() && trimmed !in newTags) {
+                            newTags.add(trimmed)
+                        }
+                        tagInput = ""
+                    },
+                    onRemoveTag = { tag -> newTags.remove(tag) }
+                )
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
@@ -166,17 +220,70 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
                     TextButton(onClick = {
                         showAddSheet = false
                         newText = ""
+                        newTags.clear()
+                        tagInput = ""
                     }) { Text("취소") }
                     TextButton(
                         onClick = {
                             if (newText.isNotBlank()) {
-                                viewModel.addKeyword(newText.trim(), newType)
+                                viewModel.addKeyword(newText.trim(), newType, newTags.toList())
                                 showAddSheet = false
                                 newText = ""
                                 newType = "keyword"
+                                newTags.clear()
+                                tagInput = ""
                             }
                         }
                     ) { Text("저장") }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun TagInput(
+    tags: List<String>,
+    tagInput: String,
+    onTagInputChange: (String) -> Unit,
+    onAddTag: () -> Unit,
+    onRemoveTag: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = tagInput,
+                onValueChange = onTagInputChange,
+                label = { Text("태그") },
+                placeholder = { Text("태그 입력 후 추가") },
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            IconButton(onClick = onAddTag, enabled = tagInput.isNotBlank()) {
+                Icon(Icons.Default.Add, contentDescription = "태그 추가")
+            }
+        }
+        if (tags.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                tags.forEach { tag ->
+                    InputChip(
+                        selected = false,
+                        onClick = {},
+                        label = { Text(tag) },
+                        trailingIcon = {
+                            IconButton(onClick = { onRemoveTag(tag) }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "태그 삭제",
+                                    modifier = Modifier.padding(2.dp)
+                                )
+                            }
+                        }
+                    )
                 }
             }
         }

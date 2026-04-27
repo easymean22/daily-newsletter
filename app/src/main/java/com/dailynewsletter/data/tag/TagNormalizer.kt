@@ -1,12 +1,12 @@
 package com.dailynewsletter.data.tag
 
 /**
- * 태그 정규화 및 "자유주제" invariant 강제용 유틸.
+ * 태그 정규화 및 "모든주제" invariant 강제용 유틸.
  *
  * 관련:
  * - ADR-0003 §4 정규화 정책 (trim + lowercase + 내부 공백 단일화 → 비교 키)
- * - ADR-0003 §3 invariant ("모든 Topics 레코드는 항상 자유주제 태그를 포함")
- * - docs/plans/tag-system.md §"자유주제 자동 보충 로직"
+ * - ADR-0003 §3 invariant ("모든 Topics 레코드는 항상 모든주제 태그를 포함")
+ * - docs/plans/tag-system.md §"모든주제 자동 보충 로직"
  *
  * 주의: 저장 표시 형태는 사용자 입력의 trim() 결과(원형 보존). 비교는 항상 [normalize]로.
  */
@@ -15,7 +15,7 @@ object TagNormalizer {
     /**
      * 시스템 시드 태그 — invariant의 안전망.
      */
-    const val FREE_TOPIC_TAG: String = "자유주제"
+    const val FREE_TOPIC_TAG: String = "모든주제"
 
     private val WHITESPACE_REGEX = Regex("\\s+")
 

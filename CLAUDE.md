@@ -436,6 +436,30 @@ Avoid long explanations unless the user asks for details.
 - Acceptance criteria need validation.
 - Forbidden changes need checking.
 
+## Agent Dispatch Naming Convention
+
+The `description` parameter passed to the `Agent` tool is shown to the user as the visible label of the background work. It must follow this format:
+
+```
+<Verb> TASK-NNN <short topic>
+```
+
+Examples:
+
+- `Implement TASK-009 Claude to Gemini migration`
+- `Verify TASK-009 Gemini migration`
+- `Plan TASK-010 release hardening`
+- `Investigate Notion 400 root cause` (no Task ID for read-only investigations)
+
+Rules:
+
+1. The first word states the action: `Implement` | `Verify` | `Plan` | `Investigate` | `Refactor` | `Migrate`.
+2. Always include the Task ID (`TASK-YYYYMMDD-NNN` or short `TASK-NNN`) so the user can map the dispatch back to a Brief in `docs/tasks/active/` or a row in `docs/status.md`.
+3. Follow with a 3–6 word topic phrase.
+4. Task ID may be omitted only for ad-hoc, read-only investigations that do not yet have a Brief.
+
+This convention lets the user scan the running-agents list and immediately recognize which Brief each row belongs to.
+
 ## Anti-Patterns
 
 Avoid:

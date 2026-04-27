@@ -1,7 +1,7 @@
 package com.dailynewsletter.data.repository
 
 import com.dailynewsletter.data.remote.notion.*
-import com.dailynewsletter.service.TopicSelectionService
+import com.dailynewsletter.data.tag.TagNormalizer
 import com.dailynewsletter.ui.topics.TopicUiItem
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -11,8 +11,7 @@ import javax.inject.Singleton
 @Singleton
 class TopicRepository @Inject constructor(
     private val notionApi: NotionApi,
-    private val settingsRepository: SettingsRepository,
-    private val topicSelectionService: TopicSelectionService
+    private val settingsRepository: SettingsRepository
 ) {
     private suspend fun getAuth(): String {
         val key = settingsRepository.getNotionApiKey() ?: throw IllegalStateException("Notion API Key 미설정")
@@ -45,7 +44,8 @@ class TopicRepository @Inject constructor(
                 title = page.properties["Title"]?.title?.firstOrNull()?.text?.content ?: "",
                 priorityType = page.properties["Priority Type"]?.select?.name ?: "direct",
                 sourceKeywords = page.properties["Source Keywords"]?.relation?.map { it.id } ?: emptyList(),
-                status = page.properties["Status"]?.select?.name ?: "selected"
+                status = page.properties["Status"]?.select?.name ?: "selected",
+                tags = page.properties["Tags"]?.multiSelect?.mapNotNull { it.name } ?: emptyList()
             )
         }
     }
@@ -66,18 +66,6 @@ class TopicRepository @Inject constructor(
         return response.results.mapNotNull { page ->
             page.properties["Title"]?.title?.firstOrNull()?.text?.content
         }
-    }
-
-    suspend fun regenerateTopics() {
-        // Delete today's existing topics
-        val todayTopics = getTodayTopics()
-        val auth = getAuth()
-        todayTopics.forEach { topic ->
-            notionApi.deleteBlock(auth = auth, blockId = topic.id)
-        }
-
-        // Generate new topics
-        topicSelectionService.selectAndSaveTopics()
     }
 
     suspend fun updateTopicTitle(id: String, newTitle: String) {
@@ -105,10 +93,70 @@ class TopicRepository @Inject constructor(
         notionApi.deleteBlock(auth = auth, blockId = id)
     }
 
-    suspend fun saveTopic(title: String, priorityType: String, sourceKeywordIds: List<String>) {
+    suspend fun findPendingTopicsByTag(tag: String): List<TopicUiItem> {
+        val auth = getAuth()
+        val dbId = getDbId()
+
+        val response = notionApi.queryDatabase(
+            auth = auth,
+            databaseId = dbId,
+            request = NotionQueryRequest(
+                filter = NotionFilter(
+                    and = listOf(
+                        NotionFilter(
+                            property = "Tags",
+                            multiSelect = NotionMultiSelectFilter(contains = tag)
+                        ),
+                        NotionFilter(
+                            property = "Status",
+                            select = NotionSelectFilter(doesNotEqual = "consumed")
+                        )
+                    )
+                ),
+                sorts = listOf(NotionSort(property = "Date", direction = "descending")),
+                pageSize = 100
+            )
+        )
+
+        return response.results.map { page ->
+            TopicUiItem(
+                id = page.id,
+                title = page.properties["Title"]?.title?.firstOrNull()?.text?.content ?: "",
+                priorityType = page.properties["Priority Type"]?.select?.name ?: "direct",
+                sourceKeywords = page.properties["Source Keywords"]?.relation?.map { it.id } ?: emptyList(),
+                status = page.properties["Status"]?.select?.name ?: "selected",
+                tags = page.properties["Tags"]?.multiSelect?.mapNotNull { it.name } ?: emptyList()
+            )
+        }
+    }
+
+    suspend fun markTopicsConsumed(ids: List<String>) {
+        val auth = getAuth()
+        for (id in ids) {
+            try {
+                notionApi.updatePage(
+                    auth = auth,
+                    pageId = id,
+                    request = UpdatePageRequest(
+                        properties = mapOf(
+                            "Status" to NotionPropertyValue(
+                                type = "select",
+                                select = NotionSelectValue("consumed")
+                            )
+                        )
+                    )
+                )
+            } catch (e: Exception) {
+                android.util.Log.w("TopicRepository", "markTopicsConsumed failed for id=$id: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun saveTopic(title: String, priorityType: String, sourceKeywordIds: List<String>, tags: List<String>) {
         val auth = getAuth()
         val dbId = getDbId()
         val today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val normalizedTags = TagNormalizer.ensureFreeTopicTag(tags)
 
         notionApi.createPage(
             auth = auth,
@@ -134,6 +182,10 @@ class TopicRepository @Inject constructor(
                     "Source Keywords" to NotionPropertyValue(
                         type = "relation",
                         relation = sourceKeywordIds.map { NotionRelationValue(it) }
+                    ),
+                    "Tags" to NotionPropertyValue(
+                        type = "multi_select",
+                        multiSelect = normalizedTags.map { NotionMultiSelectValue(name = it) }
                     )
                 )
             )

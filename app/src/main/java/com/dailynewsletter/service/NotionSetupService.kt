@@ -27,7 +27,7 @@ class NotionSetupService @Inject constructor(
                 parent = NotionParent(type = "page_id", pageId = parentPageId),
                 title = listOf(NotionRichText(text = NotionTextContent("Keywords"))),
                 properties = mapOf(
-                    "Title" to NotionPropertySchema(type = "title"),
+                    "Title" to NotionPropertySchema(type = "title", title = emptyMap()),
                     "Type" to NotionPropertySchema(
                         type = "select",
                         select = NotionSelectOptions(listOf(
@@ -44,7 +44,13 @@ class NotionSetupService @Inject constructor(
                         ))
                     ),
                     "Resolved Date" to NotionPropertySchema(type = "date", date = emptyMap()),
-                    "Created At" to NotionPropertySchema(type = "created_time", createdTime = emptyMap())
+                    "Created At" to NotionPropertySchema(type = "created_time", createdTime = emptyMap()),
+                    "Tags" to NotionPropertySchema(
+                        type = "multi_select",
+                        multiSelect = NotionMultiSelectSchema(
+                            options = listOf(NotionSelectOption("모든주제", "gray"))
+                        )
+                    )
                 )
             )
         )
@@ -57,7 +63,7 @@ class NotionSetupService @Inject constructor(
                 parent = NotionParent(type = "page_id", pageId = parentPageId),
                 title = listOf(NotionRichText(text = NotionTextContent("Topics"))),
                 properties = mapOf(
-                    "Title" to NotionPropertySchema(type = "title"),
+                    "Title" to NotionPropertySchema(type = "title", title = emptyMap()),
                     "Source Keywords" to NotionPropertySchema(
                         type = "relation",
                         relation = NotionRelationConfig(databaseId = keywordsDb.id)
@@ -75,10 +81,17 @@ class NotionSetupService @Inject constructor(
                         select = NotionSelectOptions(listOf(
                             NotionSelectOption("selected", "yellow"),
                             NotionSelectOption("read", "green"),
-                            NotionSelectOption("modified", "blue")
+                            NotionSelectOption("modified", "blue"),
+                            NotionSelectOption("consumed", "default")
                         ))
                     ),
-                    "Date" to NotionPropertySchema(type = "date", date = emptyMap())
+                    "Date" to NotionPropertySchema(type = "date", date = emptyMap()),
+                    "Tags" to NotionPropertySchema(
+                        type = "multi_select",
+                        multiSelect = NotionMultiSelectSchema(
+                            options = listOf(NotionSelectOption("모든주제", "gray"))
+                        )
+                    )
                 )
             )
         )
@@ -91,7 +104,7 @@ class NotionSetupService @Inject constructor(
                 parent = NotionParent(type = "page_id", pageId = parentPageId),
                 title = listOf(NotionRichText(text = NotionTextContent("Newsletters"))),
                 properties = mapOf(
-                    "Title" to NotionPropertySchema(type = "title"),
+                    "Title" to NotionPropertySchema(type = "title", title = emptyMap()),
                     "Date" to NotionPropertySchema(type = "date", date = emptyMap()),
                     "Topics" to NotionPropertySchema(
                         type = "relation",
@@ -105,7 +118,13 @@ class NotionSetupService @Inject constructor(
                             NotionSelectOption("failed", "red")
                         ))
                     ),
-                    "Page Count" to NotionPropertySchema(type = "number", number = emptyMap())
+                    "Page Count" to NotionPropertySchema(type = "number", number = emptyMap()),
+                    "Tags" to NotionPropertySchema(
+                        type = "multi_select",
+                        multiSelect = NotionMultiSelectSchema(
+                            options = listOf(NotionSelectOption("모든주제", "gray"))
+                        )
+                    )
                 )
             )
         )

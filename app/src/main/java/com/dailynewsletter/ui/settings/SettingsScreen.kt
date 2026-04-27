@@ -8,21 +8,28 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,107 +48,178 @@ import com.dailynewsletter.data.local.entity.SettingsEntity
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showTimePicker by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-    ) {
-        TopAppBar(title = { Text("설정") })
-
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-
-            // Notion 설정
-            SectionTitle("Notion 연동")
-
-            SecretTextField(
-                label = "Notion API Key",
-                value = state.notionApiKey,
-                onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_NOTION_API_KEY, it) }
-            )
-
-            OutlinedTextField(
-                value = state.notionParentPageId,
-                onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_NOTION_PARENT_PAGE_ID, it) },
-                label = { Text("Notion 상위 페이지 ID") },
-                placeholder = { Text("DB가 생성될 페이지 ID") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
-            // Claude 설정
-            SectionTitle("Claude AI 연동")
-
-            SecretTextField(
-                label = "Claude API Key",
-                value = state.claudeApiKey,
-                onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_CLAUDE_API_KEY, it) }
-            )
-
-            // 프린터 설정
-            SectionTitle("프린터")
-
-            OutlinedTextField(
-                value = state.printerIp,
-                onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_PRINTER_IP, it) },
-                label = { Text("프린터 IP (Wi-Fi)") },
-                placeholder = { Text("192.168.0.100") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-            )
-
-            OutlinedTextField(
-                value = state.printerEmail,
-                onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_PRINTER_EMAIL, it) },
-                label = { Text("프린터 ePrint 이메일 (선택)") },
-                placeholder = { Text("printer@hpeprint.com") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-            )
-
-            // 프린트 시간
-            SectionTitle("프린트 시간")
-
-            Card(
-                onClick = { showTimePicker = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("매일", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        " %02d:%02d".format(state.printTimeHour, state.printTimeMinute),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(" 에 프린트", style = MaterialTheme.typography.bodyLarge)
-                }
+    // Show setup result snackbar
+    LaunchedEffect(state.setupResult) {
+        when (val result = state.setupResult) {
+            is SetupResult.Success -> {
+                snackbarHostState.showSnackbar("Notion DB 3개가 생성되었습니다")
+                viewModel.clearSetupResult()
             }
+            is SetupResult.Failed -> {
+                snackbarHostState.showSnackbar("DB 생성 실패: ${result.message}")
+                viewModel.clearSetupResult()
+            }
+            else -> Unit
+        }
+    }
 
-            // 뉴스레터 분량
-            SectionTitle("뉴스레터 분량")
+    // Show generic error snackbar
+    LaunchedEffect(state.error) {
+        val errorMsg = state.error
+        if (!errorMsg.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(errorMsg)
+            viewModel.clearError()
+        }
+    }
 
-            Column {
-                Text(
-                    "A4 ${state.newsletterPages}페이지",
-                    style = MaterialTheme.typography.bodyLarge
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { scaffoldPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(scaffoldPadding)
+                .verticalScroll(rememberScrollState())
+        ) {
+            TopAppBar(title = { Text("설정") })
+
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+
+                // Notion 설정
+                SectionTitle("Notion 연동")
+
+                SecretTextField(
+                    label = "Notion API Key",
+                    value = state.notionApiKey,
+                    onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_NOTION_API_KEY, it) },
+                    enabled = !state.isSetupRunning
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Slider(
-                    value = state.newsletterPages.toFloat(),
-                    onValueChange = {
-                        viewModel.updateSetting(
-                            SettingsEntity.KEY_NEWSLETTER_PAGES,
-                            it.toInt().toString()
+
+                OutlinedTextField(
+                    value = state.notionParentPageId,
+                    onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_NOTION_PARENT_PAGE_ID, it) },
+                    label = { Text("Notion 상위 페이지 ID") },
+                    placeholder = { Text("DB가 생성될 페이지 ID") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !state.isSetupRunning
+                )
+
+                // Notion DB 자동 생성 버튼
+                val alreadySetup = !state.keywordsDbId.isNullOrBlank()
+                val canSetup = state.notionApiKey.isNotBlank() &&
+                        state.notionParentPageId.isNotBlank() &&
+                        !state.isSetupRunning &&
+                        !alreadySetup
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = { viewModel.runSetup() },
+                        enabled = canSetup,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (state.isSetupRunning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Text(
+                                if (alreadySetup) "이미 생성됨 (DB 존재)" else "Notion DB 자동 생성"
+                            )
+                        }
+                    }
+                    when {
+                        alreadySetup -> Text(
+                            "Notion DB가 이미 생성되어 있습니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                    },
-                    valueRange = 1f..5f,
-                    steps = 3
+                        state.notionApiKey.isBlank() || state.notionParentPageId.isBlank() -> Text(
+                            "Notion 토큰과 상위 페이지 ID를 입력해주세요.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Gemini 설정
+                SectionTitle("Gemini AI 연동")
+
+                SecretTextField(
+                    label = "Gemini API Key",
+                    value = state.geminiApiKey,
+                    onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_GEMINI_API_KEY, it) }
                 )
+
+                // 프린터 설정
+                SectionTitle("프린터")
+
+                OutlinedTextField(
+                    value = state.printerIp,
+                    onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_PRINTER_IP, it) },
+                    label = { Text("프린터 IP (Wi-Fi)") },
+                    placeholder = { Text("192.168.0.100") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                )
+
+                OutlinedTextField(
+                    value = state.printerEmail,
+                    onValueChange = { viewModel.updateSetting(SettingsEntity.KEY_PRINTER_EMAIL, it) },
+                    label = { Text("프린터 ePrint 이메일 (선택)") },
+                    placeholder = { Text("printer@hpeprint.com") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                )
+
+                // 프린트 시간
+                SectionTitle("프린트 시간")
+
+                Card(
+                    onClick = { showTimePicker = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("매일", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            " %02d:%02d".format(state.printTimeHour, state.printTimeMinute),
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(" 에 프린트", style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+
+                // 뉴스레터 분량
+                SectionTitle("뉴스레터 분량")
+
+                Column {
+                    Text(
+                        "A4 ${state.newsletterPages}페이지",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Slider(
+                        value = state.newsletterPages.toFloat(),
+                        onValueChange = {
+                            viewModel.updateSetting(
+                                SettingsEntity.KEY_NEWSLETTER_PAGES,
+                                it.toInt().toString()
+                            )
+                        },
+                        valueRange = 1f..5f,
+                        steps = 3
+                    )
+                }
             }
         }
     }
@@ -183,7 +261,8 @@ private fun SectionTitle(title: String) {
 private fun SecretTextField(
     label: String,
     value: String,
-    onValueChange: (String) -> Unit
+    onValueChange: (String) -> Unit,
+    enabled: Boolean = true
 ) {
     OutlinedTextField(
         value = value,
@@ -191,6 +270,7 @@ private fun SecretTextField(
         label = { Text(label) },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
-        visualTransformation = PasswordVisualTransformation()
+        visualTransformation = PasswordVisualTransformation(),
+        enabled = enabled
     )
 }
