@@ -68,3 +68,8 @@ replay_pid*
 
 # ===== Node (혹시 도구 도입 대비, 선제) =====
 node_modules/
+
+# ===== Claude Code =====
+# 사용자 로컬 권한 / 세션 상태만 제외, 공유 설정·에이전트·훅·커맨드는 추적
+.claude/settings.local.json
+.claude/worktrees/

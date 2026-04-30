@@ -7,5 +7,18 @@
       "Edit(//Users/chloe.aka/PrivateProject/daily-newsletter/docs/**)",
       "Write(//Users/chloe.aka/PrivateProject/daily-newsletter/docs/**)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/check_brief.sh"
+          }
+        ]
+      }
+    ]
   }
 }
