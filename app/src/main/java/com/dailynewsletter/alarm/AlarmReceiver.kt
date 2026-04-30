@@ -23,7 +23,7 @@ class AlarmReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 // Schedule the next occurrence immediately after firing
-                alarmScheduler.reschedule()
+                try { alarmScheduler.reschedule() } catch (t: Throwable) { Log.w("AlarmReceiver", "reschedule failed", t) }
 
                 // Start AlarmService to play sound and show full-screen popup
                 val serviceIntent = Intent(context, AlarmService::class.java)

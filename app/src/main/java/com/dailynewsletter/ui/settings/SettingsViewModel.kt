@@ -3,6 +3,7 @@ package com.dailynewsletter.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dailynewsletter.alarm.AlarmScheduler
+import com.dailynewsletter.alarm.RescheduleResult
 import com.dailynewsletter.data.local.entity.SettingsEntity
 import com.dailynewsletter.data.repository.SettingsRepository
 import com.dailynewsletter.service.NotionSetupService
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
@@ -24,6 +26,12 @@ sealed class SetupResult {
     object Running : SetupResult()
     object Success : SetupResult()
     data class Failed(val message: String) : SetupResult()
+}
+
+sealed class AlarmFeedback {
+    object Idle : AlarmFeedback()
+    object PermissionRequired : AlarmFeedback()
+    data class Failed(val message: String) : AlarmFeedback()
 }
 
 data class SettingsUiState(
@@ -53,6 +61,11 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _setupState = MutableStateFlow<SetupStateHolder>(SetupStateHolder())
+
+    private val _alarmFeedback = MutableStateFlow<AlarmFeedback>(AlarmFeedback.Idle)
+    val alarmFeedback: StateFlow<AlarmFeedback> = _alarmFeedback.asStateFlow()
+
+    fun clearAlarmFeedback() { _alarmFeedback.value = AlarmFeedback.Idle }
 
     val uiState: StateFlow<SettingsUiState> = combine(
         settingsRepository.observeAll(),
@@ -89,6 +102,24 @@ class SettingsViewModel @Inject constructor(
         _setupState.update { it.copy(isRunning = false, result = SetupResult.Failed(message), error = message) }
     }
 
+    private fun rescheduleWithFeedback() {
+        viewModelScope.launch {
+            try {
+                when (val r = alarmScheduler.reschedule()) {
+                    is RescheduleResult.PermissionRequired ->
+                        _alarmFeedback.value = AlarmFeedback.PermissionRequired
+                    is RescheduleResult.Failed ->
+                        _alarmFeedback.value = AlarmFeedback.Failed(r.message)
+                    RescheduleResult.Scheduled, RescheduleResult.Cancelled -> { /* silent */ }
+                }
+            } catch (e: SecurityException) {
+                _alarmFeedback.value = AlarmFeedback.PermissionRequired
+            } catch (e: Exception) {
+                _alarmFeedback.value = AlarmFeedback.Failed(e.message ?: "알람 설정 실패")
+            }
+        }
+    }
+
     fun updateSetting(key: String, value: String) {
         viewModelScope.launch(exceptionHandler) {
             settingsRepository.set(key, value)
@@ -111,15 +142,15 @@ class SettingsViewModel @Inject constructor(
     fun setAlarmHour(h: Int) {
         viewModelScope.launch(exceptionHandler) {
             settingsRepository.setPrintTimeHour(h)
-            alarmScheduler.reschedule()
         }
+        rescheduleWithFeedback()
     }
 
     fun setAlarmMinute(m: Int) {
         viewModelScope.launch(exceptionHandler) {
             settingsRepository.setPrintTimeMinute(m)
-            alarmScheduler.reschedule()
         }
+        rescheduleWithFeedback()
     }
 
     fun toggleAlarmDay(day: DayOfWeek) {
@@ -127,8 +158,8 @@ class SettingsViewModel @Inject constructor(
             val current = uiState.value.alarmDays
             val updated = if (day in current) current - day else current + day
             settingsRepository.setAlarmDays(updated)
-            alarmScheduler.reschedule()
         }
+        rescheduleWithFeedback()
     }
 
     fun clearSetupResult() {

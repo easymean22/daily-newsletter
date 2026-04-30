@@ -1,8 +1,8 @@
 ---
-updated: 2026-04-29
+updated: 2026-04-30
 status: accepted
 owner: planner
-summary: "TASK-027(알람 팝업+사운드+자동생성) 구현 완료, 사용자 디바이스 검증 대기. 다음 후보: TASK-029/031/039b."
+summary: "TASK-027 검증 시도 중 알람 권한 에러 발견 → TASK-040(권한 픽스+에러 라벨 분리) 진행 중. TASK-041(시간 UI 12시간/AM-PM/NumberPicker 다이얼) 대기."
 refs:
   - docs/specs/mvp.md
   - docs/context/current-state.md
@@ -26,13 +26,14 @@ refs:
 
 ## 현재 진행 중
 
-(없음)
+- [2026-04-30 | implementer | 진행중] **TASK-040** — Exact alarm permission fix + 알람 에러 라벨 분리. 5 파일(Manifest USE_EXACT_ALARM 추가 + AlarmScheduler RescheduleResult sealed + canScheduleExactAlarms 가드 + AlarmReceiver try/catch + SettingsViewModel AlarmFeedback 채널 분리 + SettingsScreen 권한 안내 스낵바). → [docs/tasks/active/TASK-20260430-040-exact-alarm-permission-fix.md](tasks/active/TASK-20260430-040-exact-alarm-permission-fix.md)
 
 ## 다음 작업 후보 (실행 순서)
 
-1. **TASK-029 — 설정 화면에 기본 프롬프트 입력**. 사용자 정의 프롬프트가 Gemini 호출 시 추가 지시문으로 합쳐짐 (옵션 a 채택).
-2. **TASK-031 — 주제 오버홀** (가장 큰 작업). 우선순위 Number 정렬 + AI 자동 우선순위 + 드래그드롭 + 상세 화면 + "특히 다루었으면 하는 부분" 입력 + 태그 시스템 + consumed 최하단 회색 + source keywords 표시 + ready/consumed 라벨 + "추천이유" 한국어 매핑.
-3. **TASK-039b — 키워드 길게 눌러 생성 시트**. KeywordScreen long-press → 해당 키워드 focus + 전체 키워드 컨텍스트로 주제 생성.
+1. **TASK-041 — 알람 시간 UI 12시간 + AM/PM + NumberPicker 다이얼**. Material3 TimePicker → Android NumberPicker AndroidView 래핑 (휠 다이얼). hour 1~12 + AM/PM 토글. 내부 저장은 24시간 유지. **TASK-040 검증 후 시작** (SettingsScreen.kt 파일 충돌).
+2. **TASK-029 — 설정 화면에 기본 프롬프트 입력**. 사용자 정의 프롬프트가 Gemini 호출 시 추가 지시문으로 합쳐짐 (옵션 a 채택).
+3. **TASK-031 — 주제 오버홀** (가장 큰 작업). 우선순위 Number 정렬 + AI 자동 우선순위 + 드래그드롭 + 상세 화면 + "특히 다루었으면 하는 부분" 입력 + 태그 시스템 + consumed 최하단 회색 + source keywords 표시 + ready/consumed 라벨 + "추천이유" 한국어 매핑.
+4. **TASK-039b — 키워드 길게 눌러 생성 시트**. KeywordScreen long-press → 해당 키워드 focus + 전체 키워드 컨텍스트로 주제 생성.
 
 ## Follow-up 후보 (Out-of-scope, 시간 나면)
 

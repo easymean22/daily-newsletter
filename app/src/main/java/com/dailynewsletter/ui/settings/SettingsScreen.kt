@@ -1,5 +1,10 @@
 package com.dailynewsletter.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,8 +27,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -38,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -49,6 +57,8 @@ import com.dailynewsletter.data.local.entity.SettingsEntity
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val alarmFeedback by viewModel.alarmFeedback.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showAlarmTimePicker by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -73,6 +83,37 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         if (!errorMsg.isNullOrBlank()) {
             snackbarHostState.showSnackbar(errorMsg)
             viewModel.clearError()
+        }
+    }
+
+    // Show alarm feedback snackbar
+    LaunchedEffect(alarmFeedback) {
+        when (val feedback = alarmFeedback) {
+            is AlarmFeedback.PermissionRequired -> {
+                val result = snackbarHostState.showSnackbar(
+                    message = "알람 권한이 필요합니다",
+                    actionLabel = "권한 설정 열기",
+                    duration = SnackbarDuration.Long
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        }
+                    } catch (e: ActivityNotFoundException) {
+                        snackbarHostState.showSnackbar("권한 설정을 열 수 없습니다. 시스템 설정 → 앱 → 알람으로 이동해 주세요.")
+                    }
+                }
+                viewModel.clearAlarmFeedback()
+            }
+            is AlarmFeedback.Failed -> {
+                snackbarHostState.showSnackbar("알람 설정 실패: ${feedback.message}")
+                viewModel.clearAlarmFeedback()
+            }
+            is AlarmFeedback.Idle -> Unit
         }
     }
 

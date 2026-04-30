@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import com.dailynewsletter.data.repository.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -12,6 +13,13 @@ import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+
+sealed class RescheduleResult {
+    object Scheduled : RescheduleResult()
+    object Cancelled : RescheduleResult()       // days empty or no next trigger
+    object PermissionRequired : RescheduleResult() // canScheduleExactAlarms == false on API 31+
+    data class Failed(val message: String) : RescheduleResult()
+}
 
 @Singleton
 class AlarmScheduler @Inject constructor(
@@ -25,7 +33,7 @@ class AlarmScheduler @Inject constructor(
 
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-    suspend fun reschedule() {
+    suspend fun reschedule(): RescheduleResult {
         val hour = settingsRepository.getPrintTimeHour()
         val minute = settingsRepository.getPrintTimeMinute()
         val days = settingsRepository.getAlarmDays()
@@ -35,7 +43,7 @@ class AlarmScheduler @Inject constructor(
         if (days.isEmpty()) {
             alarmManager.cancel(pendingIntent)
             Log.d(TAG, "no alarm days configured — alarm cancelled")
-            return
+            return RescheduleResult.Cancelled
         }
 
         val now = ZonedDateTime.now()
@@ -44,14 +52,26 @@ class AlarmScheduler @Inject constructor(
         if (triggerMillis == null) {
             alarmManager.cancel(pendingIntent)
             Log.d(TAG, "no next trigger computed — alarm cancelled")
-            return
+            return RescheduleResult.Cancelled
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            && !alarmManager.canScheduleExactAlarms()) {
+            Log.w(TAG, "exact alarm permission not granted")
+            return RescheduleResult.PermissionRequired
         }
 
         val triggerInstant = java.time.Instant.ofEpochMilli(triggerMillis)
         val openIntent = buildOpenIntent()
         val clockInfo = AlarmManager.AlarmClockInfo(triggerMillis, openIntent)
-        alarmManager.setAlarmClock(clockInfo, pendingIntent)
-        Log.d(TAG, "scheduled at $triggerInstant")
+        return try {
+            alarmManager.setAlarmClock(clockInfo, pendingIntent)
+            Log.d(TAG, "scheduled at $triggerInstant")
+            RescheduleResult.Scheduled
+        } catch (e: SecurityException) {
+            Log.w(TAG, "setAlarmClock SecurityException: ${e.message}")
+            RescheduleResult.Failed(e.message ?: "알람 설정 실패")
+        }
     }
 
     internal fun computeNextTrigger(
