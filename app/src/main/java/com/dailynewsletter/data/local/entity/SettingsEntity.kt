@@ -21,5 +21,6 @@ data class SettingsEntity(
         const val KEY_KEYWORDS_DB_ID = "keywords_db_id"
         const val KEY_TOPICS_DB_ID = "topics_db_id"
         const val KEY_NEWSLETTERS_DB_ID = "newsletters_db_id"
+        const val KEY_ALARM_DAYS = "alarm_days"
     }
 }

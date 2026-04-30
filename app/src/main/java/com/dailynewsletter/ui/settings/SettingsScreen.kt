@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -28,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberTimePickerState
+import java.time.DayOfWeek
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,7 +49,7 @@ import com.dailynewsletter.data.local.entity.SettingsEntity
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var showTimePicker by remember { mutableStateOf(false) }
+    var showAlarmTimePicker by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Show setup result snackbar
@@ -178,27 +180,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
                 )
 
-                // 프린트 시간
-                SectionTitle("프린트 시간")
-
-                Card(
-                    onClick = { showTimePicker = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("매일", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            " %02d:%02d".format(state.printTimeHour, state.printTimeMinute),
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(" 에 프린트", style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-
                 // 뉴스레터 분량
                 SectionTitle("뉴스레터 분량")
 
@@ -220,29 +201,82 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                         steps = 3
                     )
                 }
+
+                // 인쇄 알람
+                SectionTitle("인쇄 알람")
+
+                Card(
+                    onClick = { showAlarmTimePicker = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("알람 시간: ", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "%02d:%02d".format(state.alarmHour, state.alarmMinute),
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = if (state.alarmDays.isEmpty())
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            else
+                                MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                val dayLabels = listOf(
+                    DayOfWeek.MONDAY to "월",
+                    DayOfWeek.TUESDAY to "화",
+                    DayOfWeek.WEDNESDAY to "수",
+                    DayOfWeek.THURSDAY to "목",
+                    DayOfWeek.FRIDAY to "금",
+                    DayOfWeek.SATURDAY to "토",
+                    DayOfWeek.SUNDAY to "일"
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    dayLabels.forEach { (day, label) ->
+                        FilterChip(
+                            selected = day in state.alarmDays,
+                            onClick = { viewModel.toggleAlarmDay(day) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+
+                if (state.alarmDays.isEmpty()) {
+                    Text(
+                        "요일을 선택하면 알람이 활성화됩니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
 
-    if (showTimePicker) {
-        val timePickerState = rememberTimePickerState(
-            initialHour = state.printTimeHour,
-            initialMinute = state.printTimeMinute,
+    if (showAlarmTimePicker) {
+        val alarmPickerState = rememberTimePickerState(
+            initialHour = state.alarmHour,
+            initialMinute = state.alarmMinute,
             is24Hour = true
         )
         AlertDialog(
-            onDismissRequest = { showTimePicker = false },
-            title = { Text("프린트 시간 설정") },
-            text = { TimePicker(state = timePickerState) },
+            onDismissRequest = { showAlarmTimePicker = false },
+            title = { Text("알람 시간 설정") },
+            text = { TimePicker(state = alarmPickerState) },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.updateSetting(SettingsEntity.KEY_PRINT_TIME_HOUR, timePickerState.hour.toString())
-                    viewModel.updateSetting(SettingsEntity.KEY_PRINT_TIME_MINUTE, timePickerState.minute.toString())
-                    showTimePicker = false
+                    viewModel.setAlarmHour(alarmPickerState.hour)
+                    viewModel.setAlarmMinute(alarmPickerState.minute)
+                    showAlarmTimePicker = false
                 }) { Text("확인") }
             },
             dismissButton = {
-                TextButton(onClick = { showTimePicker = false }) { Text("취소") }
+                TextButton(onClick = { showAlarmTimePicker = false }) { Text("취소") }
             }
         )
     }

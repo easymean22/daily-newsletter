@@ -4,6 +4,7 @@ import com.dailynewsletter.data.local.dao.SettingsDao
 import com.dailynewsletter.data.local.entity.SettingsEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.time.DayOfWeek
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,6 +28,21 @@ class SettingsRepository @Inject constructor(
 
     suspend fun getPrintTimeHour(): Int = get(SettingsEntity.KEY_PRINT_TIME_HOUR)?.toIntOrNull() ?: 7
     suspend fun getPrintTimeMinute(): Int = get(SettingsEntity.KEY_PRINT_TIME_MINUTE)?.toIntOrNull() ?: 0
+    suspend fun setPrintTimeHour(h: Int) = set(SettingsEntity.KEY_PRINT_TIME_HOUR, h.toString())
+    suspend fun setPrintTimeMinute(m: Int) = set(SettingsEntity.KEY_PRINT_TIME_MINUTE, m.toString())
+
+    suspend fun getAlarmDays(): Set<DayOfWeek> {
+        val raw = get(SettingsEntity.KEY_ALARM_DAYS) ?: return emptySet()
+        if (raw.isBlank()) return emptySet()
+        return raw.split(",")
+            .mapNotNull { token -> runCatching { DayOfWeek.valueOf(token.trim()) }.getOrNull() }
+            .toSet()
+    }
+
+    suspend fun setAlarmDays(days: Set<DayOfWeek>) {
+        val value = days.joinToString(",") { it.name }
+        set(SettingsEntity.KEY_ALARM_DAYS, value)
+    }
 
     suspend fun getKeywordsDbId(): String? = get(SettingsEntity.KEY_KEYWORDS_DB_ID)
     suspend fun getTopicsDbId(): String? = get(SettingsEntity.KEY_TOPICS_DB_ID)

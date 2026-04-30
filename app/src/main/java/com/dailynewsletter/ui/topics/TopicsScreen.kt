@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
@@ -25,6 +27,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -57,6 +60,31 @@ fun TopicsScreen(viewModel: TopicsViewModel = hiltViewModel()) {
         }
     }
 
+    // Handle topic generation status changes
+    LaunchedEffect(state.topicGenStatus) {
+        when (val status = state.topicGenStatus) {
+            is TopicGenStatus.Success -> {
+                snackbarHostState.showSnackbar("주제 ${status.count}개 추가됨")
+                viewModel.clearTopicGenStatus()
+            }
+            else -> {}
+        }
+    }
+
+    // AlertDialog for final generation failure
+    if (state.topicGenStatus is TopicGenStatus.Failed) {
+        AlertDialog(
+            onDismissRequest = { viewModel.clearTopicGenStatus() },
+            title = { Text("생성을 마치지 못했어요") },
+            text = { Text("잠시 후 다시 시도해 주세요") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.clearTopicGenStatus() }) {
+                    Text("확인")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -65,50 +93,89 @@ fun TopicsScreen(viewModel: TopicsViewModel = hiltViewModel()) {
                     IconButton(onClick = viewModel::regenerateTopics) {
                         Icon(Icons.Default.Refresh, "주제 재선정")
                     }
+                    IconButton(
+                        onClick = { viewModel.generateTopicsManually() },
+                        enabled = state.topicGenStatus !is TopicGenStatus.Running &&
+                                  state.topicGenStatus !is TopicGenStatus.Retrying
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "주제 생성")
+                    }
                 }
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        when {
-            state.isLoading -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentAlignment = Alignment.Center
+        val genStatus = state.topicGenStatus
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+        ) {
+            // Progress banner when Running or Retrying
+            if (genStatus is TopicGenStatus.Running || genStatus is TopicGenStatus.Retrying) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    tonalElevation = 2.dp
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Text("주제 선정 중...", modifier = Modifier.padding(top = 16.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            text = if (genStatus is TopicGenStatus.Retrying) genStatus.message
+                                   else "주제 생성 중...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     }
                 }
             }
-            state.topics.isEmpty() -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("아직 선정된 주제가 없습니다", color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            // Main content
+            when {
+                state.isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Text("주제 선정 중...", modifier = Modifier.padding(top = 16.dp))
+                        }
+                    }
                 }
-            }
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.padding(padding),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
-                ) {
-                    items(state.topics, key = { it.id }) { topic ->
-                        TopicCard(
-                            topic = topic,
-                            onEdit = {
-                                editingTopic = topic
-                                editText = topic.title
-                            },
-                            onDelete = { viewModel.deleteTopic(topic.id) }
-                        )
+                state.topics.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("아직 선정된 주제가 없습니다", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
+                    ) {
+                        items(state.topics, key = { it.id }) { topic ->
+                            TopicCard(
+                                topic = topic,
+                                onEdit = {
+                                    editingTopic = topic
+                                    editText = topic.title
+                                },
+                                onDelete = { viewModel.deleteTopic(topic.id) }
+                            )
+                        }
                     }
                 }
             }

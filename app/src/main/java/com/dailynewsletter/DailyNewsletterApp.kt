@@ -43,12 +43,25 @@ class DailyNewsletterApp : Application(), Configuration.Provider {
             description = "프린트 성공/실패 알림"
         }
 
+        val alarmChannel = NotificationChannel(
+            CHANNEL_ALARM,
+            "알람",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "뉴스레터 인쇄 알람"
+            // Sound disabled — MediaPlayer in AlarmService handles audio
+            setSound(null, null)
+            enableVibration(false)
+        }
+
         manager.createNotificationChannel(topicChannel)
         manager.createNotificationChannel(printChannel)
+        manager.createNotificationChannel(alarmChannel)
     }
 
     companion object {
         const val CHANNEL_TOPICS = "topics"
         const val CHANNEL_PRINT = "print"
+        const val CHANNEL_ALARM = "alarm"
     }
 }

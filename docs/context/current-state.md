@@ -1,8 +1,8 @@
 ---
-updated: 2026-04-26
+updated: 2026-04-29
 status: accepted
 owner: planner
-summary: "Snapshot of what is implemented vs unimplemented vs broken, the open intent questions, and the next planning candidates. (Round-1 plan sweep done 2026-04-26.)"
+summary: "Snapshot of what is implemented vs unimplemented after TASK-001~039a. Manual flow Scope A verified end-to-end. Auto-print alarm flow partial (scheduler done, popup pending)."
 refs:
   - docs/specs/mvp.md
   - docs/context/project-map.md
@@ -17,27 +17,40 @@ For the **structural map** of the codebase, see [project-map.md](./project-map.m
 
 ## 1. What is implemented (today's reality)
 
-### Built and reachable from the UI
-- Notion 3-DB bootstrap (`NotionSetupService.setupDatabases`) — Keywords, Topics, Newsletters siblings under a parent page.
-- Keyword CRUD (add / list / soft-delete / toggle resolved / filter) via `KeywordScreen` + `KeywordRepository`.
-- Today's-topics view (`TopicsScreen`) with manual edit / delete / "regenerate" (deletes today's topics + re-runs Claude topic selection).
-- Newsletter list (`NewsletterScreen`) with WebView preview and a manual `Print` button that hits `NewsletterRepository.printNewsletter(id)` → `PrintService` → IPP.
-- Settings (`SettingsScreen`): Notion key, Notion parent page ID, Claude key, printer IP, printer email, single daily print time, pages slider 1–5.
-- IPP-over-HTTP print path (`PrintService.printViaIpp`) — manually-assembled IPP request bytes, no IPP library. Output target is Canon G3910.
-- HTML → PDF on-device (`PdfService`).
-- Tag normalization utility (`TagNormalizer.normalize` + `ensureFreeTopicTag`) — shipped Apr 19, but the seed string is still `"자유주제"` (rename pending in status.md).
+### Built and reachable from the UI (Scope A — manual flow)
+- **Notion 3-DB bootstrap** (`NotionSetupService.setupDatabases`) — Keywords/Topics/Newsletters with `Tags multi_select` 시드값 `모든주제`.
+- **Keyword CRUD** with overhaul (TASK-030): type 구분 제거, 80자 초과 시 제목 ellipsis + Notion 페이지 본문 paragraph block, 등록 시간(`yyyy-MM-dd HH:mm`), 상단 태그 chip 바(필터/추가/길게눌러 삭제).
+- **Topics view** with manual generation (TASK-039a): 주제 탭 우상단 `+` 버튼 → 전체 키워드 + 이력 기반 Gemini 호출 → 새 주제 N개 추가. 날짜 필터 제거 (모든 주제 표시).
+- **Newsletter gallery + lazy detail** (TASK-014/033): 2-column LazyVerticalGrid, 카드에 상태 라벨 (`🖨 인쇄됨` / `✓ 생성됨`), 카드 탭 시 본문 lazy fetch + spinner. 상세 화면은 인쇄 버튼 1개(상단 우측) + BackHandler.
+- **Manual newsletter generation** — BottomSheet (태그 + 페이지 수) → `NewsletterGenerationService.generateForSlot`:
+  - **Single-topic deep dive** (TASK-026): 태그 매칭 pending 주제 중 최신 1건만 → Gemini가 구체적 시나리오·워크플로우·반패턴 포함한 1주제 deep dive.
+  - **Mermaid 다이어그램** (TASK-032): 본문에 mermaid syntax 출력 → Notion `code` 블록 (language=mermaid)으로 변환 → 자동 렌더.
+  - **Wikimedia 이미지** (TASK-037): `<img-search query="..."/>` 마커 → Wikimedia Commons API → 첫 결과 URL → Notion `image` 블록. 사진 1순위, mermaid는 사진이 어울리지 않는 구조 표현 보조.
+- **System print via PrintManager** (TASK-023): 인쇄 버튼 → 시스템 다이얼로그 → 사용자 1탭 → Canon Print Service / Mopria plugin이 변환·송신. raw IPP/HTTP 폐기.
+- **Settings**: Notion key, Notion parent page ID, Gemini key, 알람 시간(시:분), 알람 요일(월~일 chip), 페이지 슬라이더 1–5.
+- **Gemini robustness**:
+  - 4-step exponential backoff with jitter (`1.5/3/6/12s + 0~500ms`) on 502/503/504 (TASK-034/038).
+  - Auto-fallback Flash → `gemini-2.5-flash-lite` after primary exhausts (TASK-038).
+  - UI 진행 표시: 상시 배너(Running/Retrying), AlertDialog (최종 실패), Snackbar (성공) — "혼잡"/"실패" 워딩 제거 (TASK-035/036).
+- **Alarm scheduler** (TASK-024/025): 시간/요일 영속화 + `AlarmManager.setAlarmClock` + `AlarmReceiver` + `BootReceiver`. 디바이스 재부팅 후 자동 재예약. **알람 발사 시 현재는 logcat만** — Service/Activity 미연결 (TASK-027).
 
 ### Built but not reachable from the user-facing happy path
-- Time-chain workers (`DailyTopicWorker @ T-2h`, `NewsletterWorker @ T-30m`, `PrintWorker @ T`, `CleanupWorker @ 00:00`) and the orchestrator that enqueues them (`WorkScheduler.scheduleAll`). They wire up but the chain is mismatched with the spec (see §3).
-- `TopicSelectionService.selectAndSaveTopics()` — Claude-driven topic batch generator. Today this is invoked by `DailyTopicWorker` and by `TopicRepository.regenerateTopics()`. The plan `topic-generation-paths` proposes deleting it.
-- `NewsletterGenerationService.generateAndSaveNewsletter()` — single newsletter generator from "today's topics". The plan `newsletter-shelf` proposes replacing it with a slot-aware `generateForSlot(tag, pageCount)`.
+- **Topic regenerate** (`TopicRepository.regenerateTopics()`) — 어딘가에서 호출되지만 새 generateTopicsManually flow와 중복. 추후 정리.
+- **`AutoGenStatus`** sealed class + `clearAutoGenStatus()` in `KeywordViewModel` — 자동 주제 생성 제거 후 dead code (TASK-030 follow-up).
 
-## 2. What is unimplemented (or stubbed)
+## 2. What is unimplemented (or stubbed) — current backlog
 
 | Capability | State | Notes |
 |---|---|---|
-| Tag axis on Keywords / Topics / Newsletters DBs | **None in Notion schema yet.** | ADR-0003 requires `Tags multi_select`; tag-system plan steps 3+ do this. |
-| `자유주제` → `모든주제` rename | Constant + literal still old. | implementer task queued in status.md. |
+| 알람 시점 자동 인쇄 흐름 | **구현 완료, 디바이스 검증 대기** | TASK-027: AlarmService + AlarmActivity + AlarmReceiver 연결 + 자동 생성 흐름 통합. 사용자 검증 후 본 줄 제거. |
+| 설정 화면 기본 프롬프트 | 미시작 | TASK-029: 사용자 정의 프롬프트가 Gemini 호출 시 추가 지시문으로 합쳐짐. |
+| 주제 우선순위 시스템 | 미시작 | TASK-031: Notion `Priority` Number 속성 추가 + fractional indexing(1000-step) + 드래그드롭 + AI 자동 우선순위. 가장 큰 작업. |
+| 주제 상세 화면 | 미시작 | TASK-031: 탭 시 진입, source keywords 표시, ready/consumed 상태, "특히 다루었으면 하는 부분" 입력. |
+| 주제에 태그 시스템 (키워드와 동일) | 미시작 | TASK-031: chip 바 + 필터 + 추가/삭제. |
+| Consumed 주제 최하단 + 회색 | 미시작 | TASK-031. |
+| "추천이유" 한국어 매핑 | 미시작 | TASK-031: Notion 영문 속성 그대로, UI만 한국어 라벨. |
+| 키워드 길게 눌러 주제 생성 | 미시작 | TASK-039b: KeywordScreen long-press → 해당 키워드 focus + 전체 컨텍스트로 생성. |
+| Notion 토큰 logcat 노출 | 4회+ 발생 | release-hardening 후속: OkHttp log level NONE/BASIC. 사용자에게 토큰 회전 권장. |
 | User-driven topic generation triggers (input keyword → auto, manual button, direct-write text) | **None of the three paths exists.** | Only the worker-driven path + `regenerateTopics` button exists today. |
 | Tag CRUD UI (create / attach / detach) | **None.** | spec §3 requires fully-manual user flows. |
 | Per-day print configuration (time + slot bundle + on/off toggle) | **None.** | UI today supports a single global print time only. |
@@ -113,17 +126,20 @@ Per the spec's own emphasis: "사용자는 1~8번을 한 번도 끝까지 돌려
 
 ## 6. Next planning candidates
 
-Recommendations are ordered by **how much they unblock the 1-day E2E**, not by code size. Each item is a planning candidate; **none of these are accepted spec items yet** — the user picks which ones become specs, in which order.
+순서는 **자동 인쇄 흐름 완성도**와 **사용자 가치**로 정렬. 사용자 확정 순서.
 
-| # | Candidate | Why it earns priority |
-|---|---|---|
-| 1 | ~~**Round-1 reflection sweep on the 4 active plans**~~ → **done 2026-04-26**: 4개 plan README + ADR-0003 v3 / ADR-0005 (accepted) / ADR-0006 (단일 슬롯 scope 명확화) 라운드 1 정합 완료. sub-files(01-XX 등) 옛 어휘 잔여는 README의 라운드 1 callout으로 갈음. 폴더명 `newsletter-shelf/`와 ADR 파일명 `0005-newsletter-shelf-lazy-generation.md`는 sweep scope 밖이라 유지. 다음 후보는 #2 (PrintWorker 입력 데이터 미스매치). | Unblocks 4 plans in one motion. |
-| 2 | ~~**`PrintWorker` enqueue-vs-input-data mismatch**~~ → **done 2026-04-26** (TASK-002): `WorkScheduler.schedulePrint` 제거(22줄). spec §3 사용자 행동 트리거 모델 채택. 자동 주기 인쇄는 newsletter-shelf + weekday-print-slots plan이 `PrintOrchestrator` 도입 시점에 재배선. 빌드 검증은 `SKIPPED_ENVIRONMENT_NOT_AVAILABLE`(로컬 Java 미설치) — 다른 환경에서 verifier 재시도 권장. | Removes a silent failure mode that would derail any 1-day E2E rehearsal. |
-| 3 | **MVP "reset Notion DBs / re-run setup" flow as a spec item** — required to land tag-system schema migrations cleanly. Currently no flow; users have to manually trash pages. | Migration ergonomics for tag-system + any future schema move. |
-| 4 | **`release-hardening` plan creation** — collect the 4 known infra notes (full-body logging, Claude cost guidance, Notion token logging, onboarding errors) into one plan with a defined trigger ("public release milestone"). | Keeps the MVP scope clean while preventing these from rotting in plan footnotes. |
-| 5 | ~~**1-day E2E rehearsal spec**~~ → **draft 2026-04-26**: `docs/plans/e2e-rehearsal/README.md` 1차 작성. 8단계 시나리오 + 선행 plan 매핑 + 실패 롤백 매핑 + 사용자 확인 5개. 선행 4개 plan(tag-system/topic-generation-paths/newsletter-shelf/weekday-print-slots)의 핵심 단계 완료 후 1차 시도. | Acts as the integration acceptance for the round-1 plan rewrites. |
-| 6 | **CleanupWorker fate** — spec §3 says it is "outside MVP judgment scope" but the worker is still scheduled and could run during the 1-day rehearsal and surprise the user. Decide: leave wired, leave wired but disabled, or remove. | Removes a wildcard during E2E. |
-| 7 | **Multi-slot promotion criterion** — spec deferred multi-slot to "공개 배포 마일스톤". A short note on what evidence promotes it (e.g. "the single-slot E2E has been observed to succeed 7 days in a row") would prevent ambiguity later. | Makes the future trigger explicit. |
+| # | Task | Files | 비고 |
+|---|---|---|---|
+| ~~1~~ | ~~**TASK-027 — 알람 팝업 + 사운드 + 자동 생성**~~ | 8 파일 | **구현 완료, 검증 대기** (2026-04-29). |
+| 1 | **TASK-029 — 설정 화면 기본 프롬프트 추가 지시문** | `SettingsEntity.kt`, `SettingsRepository.kt`, `SettingsScreen.kt`, `SettingsViewModel.kt`, `NewsletterGenerationService.kt` (프롬프트 합치기) | 옵션 a (additional instructions) 채택. |
+| 2 | **TASK-031 — 주제 오버홀** (가장 큼) | `TopicRepository.kt`, `TopicsViewModel.kt`, `TopicsScreen.kt`, `NotionSetupService.kt` (Priority 속성 추가), `GeminiTopicSuggester.kt` (AI priority 출력), `NewsletterGenerationService.kt` (top-priority pick) | Priority Number(fractional indexing) + 드래그드롭 라이브러리 `composereorderable` + 상세 화면 + 태그 시스템 + consumed 회색. |
+| 3 | **TASK-039b — 키워드 길게 눌러 주제 생성** | `KeywordScreen.kt`, `KeywordViewModel.kt`, `GeminiTopicSuggester.kt` (focus 인자 변형) | TASK-030/039a 끝난 뒤 후속. |
+
+### Follow-up (out-of-scope MVP, 시간 나면)
+
+- KeywordViewModel dead code 정리 (`AutoGenStatus`, 사용 안 되는 의존성).
+- `release-hardening`: OkHttp log level release-build NONE/BASIC. Notion 토큰 노출 차단.
+- CleanupWorker 운명 결정 (남길지/제거).
 
 ## 7. How this snapshot evolves
 

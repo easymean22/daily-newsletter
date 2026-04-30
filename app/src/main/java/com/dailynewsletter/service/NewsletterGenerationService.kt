@@ -9,8 +9,6 @@ import com.dailynewsletter.data.remote.gemini.GeminiRequest
 import com.dailynewsletter.data.repository.NewsletterRepository
 import com.dailynewsletter.data.repository.SettingsRepository
 import com.dailynewsletter.data.repository.TopicRepository
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -35,8 +33,118 @@ class NewsletterGenerationService @Inject constructor(
     }
 
     /**
+     * Generates a newsletter using the latest pending topic regardless of tag.
+     * Used by AlarmActivity when no unprinted newsletter is available.
+     * Falls back to throwing if no pending topic exists at all.
+     */
+    suspend fun generateLatest(pageCount: Int): GeneratedNewsletter {
+        // Try tag-less: pick the single latest pending topic across all tags
+        val topic = topicRepository.getLatestPendingTopic()
+            ?: throw IllegalStateException("주제가 없습니다")
+
+        val apiKey = settingsRepository.getGeminiApiKey() ?: throw IllegalStateException("Gemini API Key 미설정")
+        val charCount = pageCount * 1800
+
+        val prompt = """
+당신은 기술 학습 뉴스레터를 작성하는 AI입니다. 아래 단일 주제에 대해 deep dive로 깊고 구체적인 뉴스레터 1편을 작성하세요.
+
+## 주제
+- id: ${topic.id}
+- 제목: ${topic.title}
+
+## 작성 규칙
+1. **한 주제만 다룸**: 다른 주제로 옮겨가지 말고 위 주제를 끝까지 깊게.
+2. **분량**: 약 ${charCount}자 (A4 ${pageCount}페이지). 내용이 부족하면 더 깊은 하위 주제·세부 요소까지 파고들어서라도 분량을 채울 것.
+3. **언어**: 한국어 기본, 정확한 기술 용어는 영어 표기.
+4. **금지 — 추상적·일반론**: "효율적이다", "다양한 분야에 활용된다" 같은 두루뭉술한 표현 금지. 모든 문장은 검증 가능한 구체 사실·숫자·구조·동작으로.
+5. **필수 — 구체화**:
+   - 실제 코드/명령어/설정 스니펫 (해당하는 경우)
+   - 실 사용 시나리오 1개 이상
+   - 워크플로우 또는 단계별 절차 (1→2→3 식)
+   - 비교/벤치마크 수치 (있다면)
+   - 알려진 함정·실수·반-패턴
+6. **구조**:
+   - <h1>${topic.title}</h1>
+   - <h2>핵심 개념</h2><p>...</p>
+   - <h2>아키텍처 / 동작 원리</h2>
+   - <h2>실용 시나리오</h2>
+   - <h2>워크플로우 / 단계별 적용</h2>
+   - <h2>주의점·반-패턴</h2>
+   - <h2>참고 자료</h2><ul><li>...</li></ul>
+7. **완결 필수**: 응답은 반드시 `</body></html>`로 끝. 중간 끊김 금지.
+8. **그림**: <img-search query="영문 검색어"/> 또는 mermaid — 합산 최대 3개.
+
+## 출력 형식
+JSON만 출력 (코드 블록·앞뒤 텍스트 금지):
+{
+  "selectedTopicIds": ["${topic.id}"],
+  "titleSuffix": "<선택 주제 한 줄 부제목>",
+  "html": "<위 구조로 작성한 HTML>"
+}
+""".trimIndent()
+
+        val systemInstruction = "당신은 기술 학습 뉴스레터를 작성하는 전문가입니다. 요청된 JSON 형식으로만 응답하세요."
+
+        val response = GeminiRetry.withModelFallback("newsletter-latest", GeminiTopicSuggester.DEFAULT_MODEL, GeminiTopicSuggester.FALLBACK_MODEL) { model ->
+            geminiApi.generateContent(
+                apiKey = apiKey,
+                model = model,
+                request = GeminiRequest(
+                    contents = listOf(
+                        GeminiContent(
+                            role = "user",
+                            parts = listOf(GeminiPart(text = "$systemInstruction\n\n$prompt"))
+                        )
+                    ),
+                    generationConfig = GeminiGenerationConfig(maxOutputTokens = 16384, temperature = 0.7)
+                )
+            )
+        }
+
+        val rawText = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
+            ?: throw IllegalStateException("Gemini 응답이 비어 있습니다")
+
+        val finishReason = response.candidates.firstOrNull()?.finishReason ?: "UNKNOWN"
+        val rawTextChecked = if (!rawText.contains("</body>")) {
+            Log.w(TAG, "generateLatest HTML truncated, finishReason=$finishReason")
+            rawText + "\n</body></html>"
+        } else {
+            rawText
+        }
+
+        val cleanText = rawTextChecked
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+
+        val selectedTopicIds = parseSelectedTopicIds(cleanText)
+        val titleSuffix = parseTitleSuffix(cleanText)
+        val htmlBody = parseHtml(cleanText)
+        val fullHtml = buildFullHtml(htmlBody)
+        val title = if (titleSuffix.isNotBlank()) titleSuffix else topic.title
+
+        val pageId = newsletterRepository.saveNewsletter(title, fullHtml, selectedTopicIds, pageCount, emptyList())
+
+        try {
+            topicRepository.markTopicsConsumed(listOf(topic.id))
+        } catch (e: Exception) {
+            Log.w(TAG, "generateLatest markTopicsConsumed failed: ${e.message}")
+        }
+
+        return GeneratedNewsletter(
+            id = pageId,
+            title = title,
+            html = fullHtml,
+            selectedTopicIds = selectedTopicIds,
+            tags = emptyList()
+        )
+    }
+
+    /**
      * Generates a newsletter for the given slot (tag + pageCount).
-     * Fetches pending topics by tag, calls Gemini, saves to Notion, then marks topics as consumed.
+     * Picks the single latest pending topic by tag, calls Gemini for a deep-dive article,
+     * saves to Notion, then marks that one topic as consumed.
      * Per ADR-0005 §결정 4: consumed transition happens immediately after save.
      */
     suspend fun generateForSlot(tag: String, pageCount: Int): GeneratedNewsletter {
@@ -47,58 +155,79 @@ class NewsletterGenerationService @Inject constructor(
             throw IllegalStateException("해당 태그($tag)의 pending 주제가 없습니다")
         }
 
-        val topicList = topics.joinToString("\n") { "- [${it.id}] ${it.title} (${it.priorityType})" }
-        val today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 MM월 dd일"))
+        // Deep-dive mode: pick the single latest topic (findPendingTopicsByTag returns Date desc).
+        val selectedTopic = topics.first()
         val charCount = pageCount * 1800
 
         val prompt = """
-당신은 기술 뉴스레터 작성 AI입니다. 아래 후보 주제들 중 일부를 선택하여 학습용 뉴스레터를 작성해주세요.
+당신은 기술 학습 뉴스레터를 작성하는 AI입니다. 아래 단일 주제에 대해 deep dive로 깊고 구체적인 뉴스레터 1편을 작성하세요.
 
-## 후보 주제 (id + 제목 + 우선순위)
-$topicList
+## 주제
+- id: ${selectedTopic.id}
+- 제목: ${selectedTopic.title}
 
 ## 작성 규칙
-1. **주제 선택 수(N)**: N ≤ ${pageCount * 2} (${pageCount}페이지 × 2). 분량에 맞게 자유롭게 결정하되 이 상한을 초과하지 마세요.
-2. **분량**: 약 ${charCount}자 (A4 ${pageCount}페이지 분량). 목표 글자수 = ${charCount}자.
-3. **언어**: 기본적으로 한국어로 작성하되, 영어로 표현하는 것이 정확한 기술 용어는 영어로 작성
-4. **톤**: 학술적이지만 지나치게 어려운 표현은 사용하지 않음
-5. **구조**: 각 주제는 반드시 핵심 개념, 상세 설명, 실용적 예시 3개 섹션을 모두 포함해야 합니다. 어떤 주제도 섹션을 생략하지 마세요.
-6. **출처**: 논문, 공식 문서, 신뢰할 수 있는 블로그 등 공신력 있는 자료를 우선 인용. 각 섹션 끝에 참고 자료 명시
-7. **완결 필수**: 응답은 반드시 `</body></html>` 로 끝내야 합니다. 중간에 절대 끊지 말고 끝까지 작성하세요.
+1. **한 주제만 다룸**: 다른 주제로 옮겨가지 말고 위 주제를 끝까지 깊게.
+2. **분량**: 약 ${charCount}자 (A4 ${pageCount}페이지). 내용이 부족하면 더 깊은 하위 주제·세부 요소까지 파고들어서라도 분량을 채울 것.
+3. **언어**: 한국어 기본, 정확한 기술 용어는 영어 표기.
+4. **금지 — 추상적·일반론**: "효율적이다", "다양한 분야에 활용된다" 같은 두루뭉술한 표현 금지. 모든 문장은 검증 가능한 구체 사실·숫자·구조·동작으로.
+5. **필수 — 구체화**:
+   - 실제 코드/명령어/설정 스니펫 (해당하는 경우)
+   - 실 사용 시나리오 1개 이상 (예: "X 회사가 Y 문제를 풀기 위해 Z를 도입한 결과 처리량이 W% 개선")
+   - 워크플로우 또는 단계별 절차 (1→2→3 식)
+   - 비교/벤치마크 수치 (있다면)
+   - 알려진 함정·실수·반-패턴
+6. **구조**:
+   - <h1>${selectedTopic.title}</h1>
+   - <h2>핵심 개념</h2><p>...</p> — 주제의 본질을 1~2문단으로 정의 (단, 사전적 정의가 아니라 "왜 이게 만들어졌고 무슨 문제를 푸는가"에 집중).
+   - <h2>아키텍처 / 동작 원리</h2> — 내부 메커니즘. 표준 다이어그램 출처는 텍스트로 인용할 것 — <img> URL은 삽입하지 말 것 (후속 작업).
+   - <h2>실용 시나리오</h2> — 구체 사례 1~2개. 회사명/제품명/숫자 가능하면 실제 인용.
+   - <h2>워크플로우 / 단계별 적용</h2> — 1, 2, 3 번호 매긴 절차. <ol> 대신 <h3>1. ...</h3><p>...</p> 식의 헤더 구조 사용.
+   - <h2>주의점·반-패턴</h2> — 알려진 함정.
+   - <h2>참고 자료</h2><ul><li>...</li></ul> — 공신력 있는 출처 URL 또는 문서명.
+7. **완결 필수**: 응답은 반드시 `</body></html>`로 끝. 중간 끊김 금지.
+8. **그림 첨부 — 사진 우선, 다이어그램은 보조**:
+   각 시각화 지점에서 **다음 우선순위**를 따르세요:
+   - **(1순위) 실제 사진/이미지**: 개념이 사람·장치·제품·장소·실험 결과 같이 시각적 실체가 있는 경우. 마커: `<img-search query="영문 검색어"/>`.
+     - 검색어는 영문 구체 명사 (예: "Linux kernel architecture diagram", "TCP three way handshake", "Kubernetes cluster"). "computer", "data" 같은 일반어 금지.
+     - 1편당 최대 2개.
+   - **(2순위, 사진이 어울리지 않을 때만) mermaid 다이어그램**: 개념이 **구조·흐름·관계** 자체일 때 (실 사진은 의미 없는 경우):
+     - 시스템 아키텍처/구성요소 → flowchart
+     - 시간순 메시지 흐름 → sequenceDiagram
+     - 상태 전이 → stateDiagram
+     - 데이터 모델 관계 → erDiagram
+     - 형식: `<pre><code class="language-mermaid">...mermaid 텍스트...</code></pre>`
+     - 추상적 단순 박스 다이어그램 금지 — 실제 정보 담긴 경우만. 노드 라벨 한글 OK. 문법 불확실하면 생략.
+     - 1편당 최대 2개.
+   - **합산 상한**: 사진 + mermaid 합쳐 최대 3개. 같은 개념에 둘 다 쓰지 말 것.
+   - 그림이 본문 이해에 도움 안 되는 추상 개념은 둘 다 생략.
 
 ## 출력 형식
-다음 JSON 형식으로 응답해주세요 (JSON만 출력, 코드 블록 없음):
+JSON만 출력 (코드 블록·앞뒤 텍스트 금지):
 {
-  "selectedTopicIds": ["<선택한 topic id 목록>"],
-  "titleSuffix": "<뉴스레터 부제목 (선택된 주제 요약, 한 줄)>",
-  "html": "<HTML 본문 (아래 구조 참고)>"
+  "selectedTopicIds": ["${selectedTopic.id}"],
+  "titleSuffix": "<선택 주제 한 줄 부제목>",
+  "html": "<위 구조로 작성한 HTML>"
 }
-
-html 구조:
-<h1>Daily Newsletter - $today</h1>
-각 주제별:
-<h2>주제 제목</h2>
-<h3>핵심 개념</h3><p>...</p>
-<h3>상세 설명</h3><p>...</p>
-<h3>실용적 예시</h3><p>...</p>
-<p class="source">참고: [출처 목록]</p>
 """.trimIndent()
 
         val systemInstruction = "당신은 기술 학습 뉴스레터를 작성하는 전문가입니다. 요청된 JSON 형식으로만 응답하세요."
 
-        val response = geminiApi.generateContent(
-            apiKey = apiKey,
-            model = GeminiTopicSuggester.DEFAULT_MODEL,
-            request = GeminiRequest(
-                contents = listOf(
-                    GeminiContent(
-                        role = "user",
-                        parts = listOf(GeminiPart(text = "$systemInstruction\n\n$prompt"))
-                    )
-                ),
-                generationConfig = GeminiGenerationConfig(maxOutputTokens = 16384, temperature = 0.7)
+        val response = GeminiRetry.withModelFallback("newsletter", GeminiTopicSuggester.DEFAULT_MODEL, GeminiTopicSuggester.FALLBACK_MODEL) { model ->
+            geminiApi.generateContent(
+                apiKey = apiKey,
+                model = model,
+                request = GeminiRequest(
+                    contents = listOf(
+                        GeminiContent(
+                            role = "user",
+                            parts = listOf(GeminiPart(text = "$systemInstruction\n\n$prompt"))
+                        )
+                    ),
+                    generationConfig = GeminiGenerationConfig(maxOutputTokens = 16384, temperature = 0.7)
+                )
             )
-        )
+        }
 
         val rawText = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw IllegalStateException("Gemini 응답이 비어 있습니다")
@@ -117,28 +246,22 @@ html 구조:
             .removeSuffix("```")
             .trim()
 
-        // Parse JSON response
+        // Parse JSON response — selectedTopicIds is always exactly 1 element in deep-dive mode.
         val selectedTopicIds = parseSelectedTopicIds(cleanText)
         val titleSuffix = parseTitleSuffix(cleanText)
         val htmlBody = parseHtml(cleanText)
 
-        // Soft warning if Gemini exceeded the N limit
-        if (selectedTopicIds.size > pageCount * 2) {
-            Log.w("NewsletterGenerationService",
-                "Gemini selected ${selectedTopicIds.size} topics but limit is ${pageCount * 2} for pageCount=$pageCount. Not truncating to avoid html-id mismatch.")
-        }
-
         val fullHtml = buildFullHtml(htmlBody)
-        val title = if (titleSuffix.isNotBlank()) titleSuffix else "Daily Newsletter - $today"
+        val title = if (titleSuffix.isNotBlank()) titleSuffix else selectedTopic.title
 
         // TODO(round-1): Gemini는 태그에 관여하지 않는다. 모든 경로의 default 태그는 emptyList() (saveTopic/saveNewsletter 내부의 ensureFreeTopicTag invariant 보충).
         val pageId = newsletterRepository.saveNewsletter(title, fullHtml, selectedTopicIds, pageCount, emptyList())
 
-        // ADR-0005 §결정 4: mark topics consumed immediately after save
+        // ADR-0005 §결정 4: mark the single selected topic consumed immediately after save.
         try {
-            topicRepository.markTopicsConsumed(selectedTopicIds)
+            topicRepository.markTopicsConsumed(listOf(selectedTopic.id))
         } catch (e: Exception) {
-            Log.w("NewsletterGenerationService", "markTopicsConsumed failed: ${e.message}")
+            Log.w(TAG, "markTopicsConsumed failed: ${e.message}")
         }
 
         return GeneratedNewsletter(
@@ -156,7 +279,7 @@ html 구조:
             val content = match?.groupValues?.get(1) ?: return emptyList()
             Regex(""""([^"]+)"""").findAll(content).map { it.groupValues[1] }.toList()
         } catch (e: Exception) {
-            Log.w("NewsletterGenerationService", "Failed to parse selectedTopicIds: ${e.message}")
+            Log.w(TAG, "Failed to parse selectedTopicIds: ${e.message}")
             emptyList()
         }
     }
@@ -200,7 +323,7 @@ html 구조:
             }
             sb.toString().trim()
         } catch (e: Exception) {
-            Log.w("NewsletterGenerationService", "Failed to parse html field: ${e.message}")
+            Log.w(TAG, "Failed to parse html field: ${e.message}")
             ""
         }
     }

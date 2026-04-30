@@ -1,12 +1,16 @@
 package com.dailynewsletter.ui.newsletter
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dailynewsletter.DailyNewsletterApp
 import com.dailynewsletter.data.repository.NewsletterRepository
+import com.dailynewsletter.service.GeminiRetry
 import com.dailynewsletter.service.GeneratedNewsletter
 import com.dailynewsletter.service.NewsletterGenerationService
 import com.dailynewsletter.service.NotificationHelper
+import com.dailynewsletter.service.PrintService
+import com.dailynewsletter.service.RetryEvent
 import com.dailynewsletter.ui.common.exceptionHandler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +33,7 @@ data class NewsletterUiItem(
 sealed class ManualGenStatus {
     object Idle : ManualGenStatus()
     object Running : ManualGenStatus()
+    data class Retrying(val message: String) : ManualGenStatus()
     data class Success(val title: String) : ManualGenStatus()
     data class Failed(val message: String) : ManualGenStatus()
 }
@@ -37,14 +42,16 @@ data class NewsletterUiState(
     val newsletters: List<NewsletterUiItem> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
-    val manualGenStatus: ManualGenStatus = ManualGenStatus.Idle
+    val manualGenStatus: ManualGenStatus = ManualGenStatus.Idle,
+    val loadingDetailIds: Set<String> = emptySet()
 )
 
 @HiltViewModel
 class NewsletterViewModel @Inject constructor(
     private val newsletterRepository: NewsletterRepository,
     private val newsletterGenerationService: NewsletterGenerationService,
-    private val notificationHelper: NotificationHelper
+    private val notificationHelper: NotificationHelper,
+    private val printService: PrintService
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(NewsletterUiState())
@@ -56,6 +63,25 @@ class NewsletterViewModel @Inject constructor(
 
     init {
         loadNewsletters()
+        viewModelScope.launch {
+            GeminiRetry.events.collect { event ->
+                when (event) {
+                    is RetryEvent.Retrying -> {
+                        val currentStatus = _uiState.value.manualGenStatus
+                        if (currentStatus is ManualGenStatus.Running ||
+                            currentStatus is ManualGenStatus.Retrying
+                        ) {
+                            val msg = "잠시 후 다시 시도하고 있어요 (${event.attempt}/${event.totalAttempts})"
+                            _uiState.update { it.copy(manualGenStatus = ManualGenStatus.Retrying(msg)) }
+                        }
+                    }
+                    is RetryEvent.Switching -> {
+                        val msg = "다른 모델로 시도하고 있어요"
+                        _uiState.update { it.copy(manualGenStatus = ManualGenStatus.Retrying(msg)) }
+                    }
+                }
+            }
+        }
     }
 
     fun loadNewsletters() {
@@ -76,13 +102,43 @@ class NewsletterViewModel @Inject constructor(
             }
     }
 
-    fun printNewsletter(id: String) {
+    fun printNewsletter(activity: Activity, item: NewsletterUiItem) {
+        val html = item.htmlContent ?: run {
+            _uiState.update { it.copy(error = "뉴스레터 내용이 없습니다") }
+            return
+        }
+        printService.startSystemPrint(activity, html, item.title)
         viewModelScope.launch(exceptionHandler) {
-            try {
-                newsletterRepository.printNewsletter(id)
-            } catch (e: Exception) {
-                _uiState.update { it.copy(error = e.message) }
-            }
+            newsletterRepository.markNewsletterPrinted(item.id)
+            loadNewsletters()
+        }
+    }
+
+    fun loadNewsletterContent(id: String) {
+        val current = _uiState.value
+        if (current.newsletters.find { it.id == id }?.htmlContent != null) return
+        if (current.loadingDetailIds.contains(id)) return
+        viewModelScope.launch(exceptionHandler) {
+            _uiState.update { it.copy(loadingDetailIds = it.loadingDetailIds + id) }
+            runCatching { newsletterRepository.getNewsletter(id) }
+                .onSuccess { fetched ->
+                    _uiState.update { state ->
+                        state.copy(
+                            newsletters = state.newsletters.map { item ->
+                                if (item.id == id) item.copy(htmlContent = fetched.htmlContent) else item
+                            },
+                            loadingDetailIds = state.loadingDetailIds - id
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    _uiState.update { state ->
+                        state.copy(
+                            error = e.message ?: "본문 로드에 실패했습니다",
+                            loadingDetailIds = state.loadingDetailIds - id
+                        )
+                    }
+                }
         }
     }
 
@@ -103,7 +159,7 @@ class NewsletterViewModel @Inject constructor(
                 val msg = e.message ?: "알 수 없는 오류"
                 _uiState.update { it.copy(manualGenStatus = ManualGenStatus.Failed(msg)) }
                 notificationHelper.notify(
-                    title = "생성 실패",
+                    title = "생성 미완료",
                     message = msg,
                     channelId = DailyNewsletterApp.CHANNEL_TOPICS
                 )

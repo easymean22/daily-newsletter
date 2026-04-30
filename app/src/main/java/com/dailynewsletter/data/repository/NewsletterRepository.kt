@@ -1,18 +1,20 @@
 package com.dailynewsletter.data.repository
 
 import com.dailynewsletter.data.remote.notion.*
-import com.dailynewsletter.service.PrintService
+import com.dailynewsletter.service.WikimediaImageSearch
 import com.dailynewsletter.ui.newsletter.NewsletterUiItem
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 @Singleton
 class NewsletterRepository @Inject constructor(
     private val notionApi: NotionApi,
     private val settingsRepository: SettingsRepository,
-    private val printService: PrintService
+    private val wikimediaImageSearch: WikimediaImageSearch
 ) {
     private suspend fun getAuth(): String {
         val key = settingsRepository.getNotionApiKey() ?: throw IllegalStateException("Notion API Key 미설정")
@@ -41,16 +43,6 @@ class NewsletterRepository @Inject constructor(
             val date = page.properties["Date"]?.date?.start ?: ""
             val status = page.properties["Status"]?.select?.name ?: "generated"
             val pageCount = page.properties["Page Count"]?.number?.toInt() ?: 2
-
-            // Fetch page content for HTML
-            val contentBlocks = try {
-                notionApi.getBlockChildren(auth = auth, blockId = page.id)
-            } catch (e: Exception) { null }
-
-            val htmlContent = contentBlocks?.let {
-                try { blocksToHtml(it) } catch (e: Exception) { null }
-            }
-
             val tags = page.properties["Tags"]?.multiSelect?.mapNotNull { it.name } ?: emptyList()
 
             NewsletterUiItem(
@@ -59,7 +51,7 @@ class NewsletterRepository @Inject constructor(
                 date = date,
                 status = status,
                 pageCount = pageCount,
-                htmlContent = htmlContent,
+                htmlContent = null,
                 tags = tags
             )
         }
@@ -305,24 +297,47 @@ class NewsletterRepository @Inject constructor(
         )
     }
 
-    suspend fun printNewsletter(id: String) {
-        val newsletter = getNewsletter(id)
-        val html = newsletter.htmlContent ?: throw IllegalStateException("뉴스레터 내용이 없습니다")
-
-        printService.printHtml(html, newsletter.title)
+    suspend fun markNewsletterPrinted(id: String) {
         updateNewsletterStatus(id, "printed")
+    }
+
+    /**
+     * Returns the most recent newsletter that has not been printed yet,
+     * with full HTML content loaded.
+     * Returns null if no unprinted newsletter exists.
+     */
+    suspend fun getLatestUnprintedNewsletter(): NewsletterUiItem? {
+        val auth = getAuth()
+        val dbId = getDbId()
+
+        val response = notionApi.queryDatabase(
+            auth = auth,
+            databaseId = dbId,
+            request = NotionQueryRequest(
+                filter = NotionFilter(
+                    property = "Status",
+                    select = NotionSelectFilter(doesNotEqual = "printed")
+                ),
+                sorts = listOf(NotionSort(property = "Date", direction = "descending")),
+                pageSize = 1
+            )
+        )
+
+        val page = response.results.firstOrNull() ?: return null
+        return getNewsletter(page.id)
     }
 
     /**
      * Converts an HTML string produced by Gemini into a flat list of Notion native blocks.
      *
-     * Supported tags: h1, h2, h3, p, ul > li.
+     * Supported tags: h1, h2, h3, p, ul > li, img-search markers.
      * Meta/structure tags (html, head, body, style, meta, DOCTYPE) are ignored.
      * Inline tags (strong, code, em, etc.) are stripped to plain text.
      * HTML entities (&lt; &gt; &amp; &nbsp;) are decoded.
+     * img-search markers are resolved via WikimediaImageSearch in parallel; markers with no result are removed.
      * Defensive: never throws; returns partial/empty list on malformed input.
      */
-    private fun htmlToBlocks(html: String): List<NotionBlock> {
+    private suspend fun htmlToBlocks(html: String): List<NotionBlock> {
         val blocks = mutableListOf<NotionBlock>()
 
         // Decode common HTML entities
@@ -342,6 +357,70 @@ class NewsletterRepository @Inject constructor(
         fun richTextFrom(text: String): List<NotionRichText> =
             chunkText(text).map { NotionRichText(text = NotionTextContent(it)) }
 
+        // Extract <pre><code class="language-mermaid">...</code></pre> blocks first,
+        // before the strip-tags pass would destroy them.
+        // Supports both single-quoted and double-quoted class attribute, and optional spaces.
+        val mermaidPattern = Regex(
+            """<pre[^>]*>\s*<code\s[^>]*class\s*=\s*["']language-mermaid["'][^>]*>([\s\S]*?)</code>\s*</pre>""",
+            RegexOption.IGNORE_CASE
+        )
+
+        // Build a list of (startIndex, block) by scanning for block-level elements in order
+        data class IndexedBlock(val start: Int, val block: NotionBlock)
+        val indexed = mutableListOf<IndexedBlock>()
+
+        // Collect mermaid blocks, then remove them from the HTML before regular processing
+        var processedHtml = html
+        for (match in mermaidPattern.findAll(html)) {
+            val mermaidText = decodeEntities(match.groupValues[1]).trim()
+            if (mermaidText.isEmpty()) continue
+            val rt = listOf(NotionRichText(text = NotionTextContent(mermaidText.take(1900))))
+            indexed.add(IndexedBlock(
+                match.range.first,
+                NotionBlock(
+                    type = "code",
+                    code = NotionCodeBlock(richText = rt, language = "mermaid")
+                )
+            ))
+        }
+        // Remove mermaid blocks from HTML so they are not re-processed as plain text
+        processedHtml = mermaidPattern.replace(processedHtml, "")
+
+        // img-search pass: extract <img-search query="..."/> markers, resolve in parallel
+        val imgSearchPattern = Regex(
+            """<img-search\s+query\s*=\s*["']([^"']+)["']\s*/?>""",
+            RegexOption.IGNORE_CASE
+        )
+        val imgSearchMatches = imgSearchPattern.findAll(processedHtml).toList()
+        if (imgSearchMatches.isNotEmpty()) {
+            // Resolve all queries in parallel
+            val resolvedUrls: List<Pair<Int, String?>> = coroutineScope {
+                imgSearchMatches.map { match ->
+                    async {
+                        val query = match.groupValues[1]
+                        match.range.first to wikimediaImageSearch.searchFirst(query)
+                    }
+                }.map { it.await() }
+            }
+            // Add image blocks for successful lookups; track positions for sorted insertion
+            for ((startIdx, url) in resolvedUrls) {
+                if (url != null) {
+                    indexed.add(IndexedBlock(
+                        startIdx,
+                        NotionBlock(
+                            type = "image",
+                            image = NotionImageBlock(
+                                type = "external",
+                                external = NotionImageExternal(url = url)
+                            )
+                        )
+                    ))
+                }
+            }
+            // Remove all img-search markers from HTML regardless of lookup result
+            processedHtml = imgSearchPattern.replace(processedHtml, "")
+        }
+
         // Process block-level tags: h1, h2, h3, p
         val blockTagPattern = Regex(
             "<(h1|h2|h3|p)(\\s[^>]*)?>([\\s\\S]*?)<\\/\\1>",
@@ -351,12 +430,8 @@ class NewsletterRepository @Inject constructor(
         val ulPattern = Regex("<ul(\\s[^>]*)?>[\\s\\S]*?<\\/ul>", RegexOption.IGNORE_CASE)
         val liPattern = Regex("<li(\\s[^>]*)?>([ \\s\\S]*?)<\\/li>", RegexOption.IGNORE_CASE)
 
-        // Build a list of (startIndex, block) by scanning for block-level elements in order
-        data class IndexedBlock(val start: Int, val block: NotionBlock)
-        val indexed = mutableListOf<IndexedBlock>()
-
         // Collect h1/h2/h3/p matches
-        for (match in blockTagPattern.findAll(html)) {
+        for (match in blockTagPattern.findAll(processedHtml)) {
             val tag = match.groupValues[1].lowercase()
             val text = plainText(match.groupValues[3])
             if (text.isEmpty()) continue
@@ -371,7 +446,7 @@ class NewsletterRepository @Inject constructor(
         }
 
         // Collect ul blocks (expand each li into its own bulleted_list_item block)
-        for (ulMatch in ulPattern.findAll(html)) {
+        for (ulMatch in ulPattern.findAll(processedHtml)) {
             val ulStart = ulMatch.range.first
             for (liMatch in liPattern.findAll(ulMatch.value)) {
                 val text = plainText(liMatch.groupValues[2])
@@ -390,7 +465,7 @@ class NewsletterRepository @Inject constructor(
 
         // Fallback: if nothing matched, return the entire stripped content as one paragraph
         if (blocks.isEmpty()) {
-            val fallback = plainText(html)
+            val fallback = plainText(processedHtml)
             if (fallback.isNotEmpty()) {
                 blocks.add(NotionBlock(
                     type = "paragraph",

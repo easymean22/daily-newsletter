@@ -1,7 +1,9 @@
 package com.dailynewsletter.ui.keyword
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,25 +14,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -56,6 +57,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,8 +66,9 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddSheet by remember { mutableStateOf(false) }
     var newText by remember { mutableStateOf("") }
-    var newType by remember { mutableStateOf("keyword") }
     val snackbarHostState = remember { SnackbarHostState() }
+    var showAddTagDialog by remember { mutableStateOf(false) }
+    var deleteTagTarget by remember { mutableStateOf<String?>(null) }
 
     // Observe error state and show snackbar
     LaunchedEffect(state.error) {
@@ -94,13 +98,7 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("키워드 / 메모") },
-                actions = {
-                    FilterChips(
-                        selectedFilter = state.filter,
-                        onFilterChange = viewModel::setFilter
-                    )
-                }
+                title = { Text("키워드") }
             )
         },
         floatingActionButton = {
@@ -110,59 +108,70 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        if (state.keywords.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "키워드나 메모를 추가해보세요",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.padding(padding),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
-            ) {
-                items(state.keywords, key = { it.id }) { keyword ->
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            if (value == SwipeToDismissBoxValue.EndToStart) {
-                                viewModel.deleteKeyword(keyword.id)
-                                true
-                            } else false
-                        }
-                    )
+        Column(modifier = Modifier.padding(padding)) {
+            // Tag filter bar
+            TagFilterBar(
+                availableTags = state.availableTags,
+                selectedTag = state.selectedTagFilter,
+                onTagClick = { tag ->
+                    viewModel.selectTagFilter(if (tag == state.selectedTagFilter) null else tag)
+                },
+                onTagLongClick = { tag -> deleteTagTarget = tag },
+                onAddTagClick = { showAddTagDialog = true }
+            )
 
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        backgroundContent = {
-                            val color by animateColorAsState(
-                                if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
-                                    MaterialTheme.colorScheme.errorContainer
-                                else Color.Transparent,
-                                label = "bg"
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(color)
-                                    .padding(horizontal = 20.dp),
-                                contentAlignment = Alignment.CenterEnd
-                            ) {
-                                Icon(Icons.Default.Delete, "삭제", tint = MaterialTheme.colorScheme.error)
+            if (state.keywords.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "키워드를 추가해보세요",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
+                ) {
+                    items(state.keywords, key = { it.id }) { keyword ->
+                        val dismissState = rememberSwipeToDismissBoxState(
+                            confirmValueChange = { value ->
+                                if (value == SwipeToDismissBoxValue.EndToStart) {
+                                    viewModel.deleteKeyword(keyword.id)
+                                    true
+                                } else false
                             }
-                        }
-                    ) {
-                        KeywordCard(
-                            keyword = keyword,
-                            onToggleResolved = { viewModel.toggleResolved(keyword.id) }
                         )
+
+                        SwipeToDismissBox(
+                            state = dismissState,
+                            backgroundContent = {
+                                val color by animateColorAsState(
+                                    if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
+                                        MaterialTheme.colorScheme.errorContainer
+                                    else Color.Transparent,
+                                    label = "bg"
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(color)
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.CenterEnd
+                                ) {
+                                    Icon(Icons.Default.Delete, "삭제", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        ) {
+                            KeywordCard(
+                                keyword = keyword,
+                                onToggleResolved = { viewModel.toggleResolved(keyword.id) }
+                            )
+                        }
                     }
                 }
             }
@@ -177,7 +186,6 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
             onDismissRequest = {
                 showAddSheet = false
                 newText = ""
-                newType = "keyword"
                 newTags.clear()
                 tagInput = ""
             },
@@ -187,7 +195,7 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
                 modifier = Modifier.padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("새 키워드 / 메모", style = MaterialTheme.typography.titleLarge)
+                Text("새 키워드", style = MaterialTheme.typography.titleLarge)
 
                 OutlinedTextField(
                     value = newText,
@@ -197,11 +205,10 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
                     minLines = 2
                 )
 
-                TypeSelector(selected = newType, onSelect = { newType = it })
-
                 TagInput(
                     tags = newTags,
                     tagInput = tagInput,
+                    availableTags = state.availableTags,
                     onTagInputChange = { tagInput = it },
                     onAddTag = {
                         val trimmed = tagInput.trim()
@@ -226,16 +233,102 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
                     TextButton(
                         onClick = {
                             if (newText.isNotBlank()) {
-                                viewModel.addKeyword(newText.trim(), newType, newTags.toList())
+                                viewModel.addKeyword(newText.trim(), newTags.toList())
                                 showAddSheet = false
                                 newText = ""
-                                newType = "keyword"
                                 newTags.clear()
                                 tagInput = ""
                             }
                         }
                     ) { Text("저장") }
                 }
+            }
+        }
+    }
+
+    // Add tag dialog
+    if (showAddTagDialog) {
+        var newTagName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAddTagDialog = false; newTagName = "" },
+            title = { Text("새 태그") },
+            text = {
+                OutlinedTextField(
+                    value = newTagName,
+                    onValueChange = { newTagName = it },
+                    label = { Text("태그 이름") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val trimmed = newTagName.trim()
+                        if (trimmed.isNotEmpty()) {
+                            viewModel.addNewTag(trimmed)
+                        }
+                        showAddTagDialog = false
+                        newTagName = ""
+                    }
+                ) { Text("추가") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddTagDialog = false; newTagName = "" }) { Text("취소") }
+            }
+        )
+    }
+
+    // Delete tag confirmation dialog
+    deleteTagTarget?.let { tag ->
+        AlertDialog(
+            onDismissRequest = { deleteTagTarget = null },
+            title = { Text("태그 삭제") },
+            text = { Text("'$tag' 태그를 삭제하시겠습니까?\n이 태그를 가진 모든 키워드에서 제거됩니다.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.removeTag(tag)
+                        deleteTagTarget = null
+                    }
+                ) { Text("삭제") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTagTarget = null }) { Text("취소") }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun TagFilterBar(
+    availableTags: Set<String>,
+    selectedTag: String?,
+    onTagClick: (String) -> Unit,
+    onTagLongClick: (String) -> Unit,
+    onAddTagClick: () -> Unit
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        items(availableTags.toList()) { tag ->
+            FilterChip(
+                selected = tag == selectedTag,
+                onClick = { onTagClick(tag) },
+                label = { Text(tag) },
+                modifier = Modifier.combinedClickable(
+                    onClick = { onTagClick(tag) },
+                    onLongClick = { onTagLongClick(tag) }
+                )
+            )
+        }
+        item {
+            IconButton(onClick = onAddTagClick) {
+                Icon(Icons.Default.Add, contentDescription = "태그 추가")
             }
         }
     }
@@ -246,6 +339,7 @@ fun KeywordScreen(viewModel: KeywordViewModel = hiltViewModel()) {
 private fun TagInput(
     tags: List<String>,
     tagInput: String,
+    availableTags: Set<String>,
     onTagInputChange: (String) -> Unit,
     onAddTag: () -> Unit,
     onRemoveTag: (String) -> Unit
@@ -265,6 +359,22 @@ private fun TagInput(
             )
             IconButton(onClick = onAddTag, enabled = tagInput.isNotBlank()) {
                 Icon(Icons.Default.Add, contentDescription = "태그 추가")
+            }
+        }
+        // Quick-select from existing tags
+        if (availableTags.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                availableTags.filter { it !in tags }.forEach { tag ->
+                    AssistChip(
+                        onClick = {
+                            if (tag !in tags) {
+                                onTagInputChange(tag)
+                                onAddTag()
+                            }
+                        },
+                        label = { Text(tag, style = MaterialTheme.typography.labelSmall) }
+                    )
+                }
             }
         }
         if (tags.isNotEmpty()) {
@@ -307,23 +417,31 @@ private fun KeywordCard(keyword: KeywordUiItem, onToggleResolved: () -> Unit) {
                     keyword.title,
                     style = MaterialTheme.typography.bodyLarge
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AssistChip(
-                        onClick = {},
-                        label = {
-                            Text(
-                                if (keyword.type == "keyword") "키워드" else "메모",
-                                style = MaterialTheme.typography.labelSmall
+                // Time display
+                val timeText = formatKeywordTime(keyword.createdTime)
+                if (timeText != null) {
+                    Text(
+                        timeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (keyword.tags.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        keyword.tags.take(3).forEach { tag ->
+                            AssistChip(
+                                onClick = {},
+                                label = { Text(tag, style = MaterialTheme.typography.labelSmall) }
                             )
                         }
-                    )
-                    if (keyword.isResolved) {
-                        Text(
-                            "해결됨",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
                     }
+                }
+                if (keyword.isResolved) {
+                    Text(
+                        "해결됨",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
             IconButton(onClick = onToggleResolved) {
@@ -338,39 +456,11 @@ private fun KeywordCard(keyword: KeywordUiItem, onToggleResolved: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TypeSelector(selected: String, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = if (selected == "keyword") "키워드" else "메모",
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("타입") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("키워드") }, onClick = { onSelect("keyword"); expanded = false })
-            DropdownMenuItem(text = { Text("메모") }, onClick = { onSelect("memo"); expanded = false })
-        }
-    }
-}
-
-@Composable
-private fun FilterChips(selectedFilter: String, onFilterChange: (String) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        listOf("all" to "전체", "pending" to "대기", "resolved" to "해결").forEach { (key, label) ->
-            TextButton(onClick = { onFilterChange(key) }) {
-                Text(
-                    label,
-                    color = if (selectedFilter == key) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
+/** Formats an ISO-8601 datetime string (e.g. Notion created_time) to "yyyy-MM-dd HH:mm". */
+private fun formatKeywordTime(iso: String?): String? {
+    if (iso.isNullOrBlank()) return null
+    return runCatching {
+        val odt = OffsetDateTime.parse(iso)
+        odt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+    }.getOrNull()
 }

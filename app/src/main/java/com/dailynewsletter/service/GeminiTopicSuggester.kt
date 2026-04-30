@@ -74,23 +74,25 @@ $pastTopicList
 ]
 """.trimIndent()
 
-        val response = geminiApi.generateContent(
-            apiKey = apiKey,
-            model = DEFAULT_MODEL,
-            request = GeminiRequest(
-                contents = listOf(
-                    GeminiContent(
-                        role = "user",
-                        parts = listOf(GeminiPart(text = prompt))
+        val response = GeminiRetry.withModelFallback("topic-suggest", DEFAULT_MODEL, FALLBACK_MODEL) { model ->
+            geminiApi.generateContent(
+                apiKey = apiKey,
+                model = model,
+                request = GeminiRequest(
+                    contents = listOf(
+                        GeminiContent(
+                            role = "user",
+                            parts = listOf(GeminiPart(text = prompt))
+                        )
+                    ),
+                    generationConfig = GeminiGenerationConfig(
+                        maxOutputTokens = 8192,
+                        temperature = 0.7,
+                        responseMimeType = "application/json"
                     )
-                ),
-                generationConfig = GeminiGenerationConfig(
-                    maxOutputTokens = 8192,
-                    temperature = 0.7,
-                    responseMimeType = "application/json"
                 )
             )
-        )
+        }
 
         val text = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw IllegalStateException("Gemini 응답에 content가 없습니다")
@@ -121,5 +123,6 @@ $pastTopicList
     companion object {
         private const val TAG = "GeminiTopicSuggester"
         const val DEFAULT_MODEL = "gemini-2.5-flash"
+        const val FALLBACK_MODEL = "gemini-2.5-flash-lite"
     }
 }

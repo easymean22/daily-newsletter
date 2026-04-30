@@ -12,6 +12,10 @@ import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
+private const val LONG_TEXT_THRESHOLD = 80
+private const val TITLE_MAX_LENGTH = 50
+private const val KEY_ALL_TAGS = "all_tags"
+
 @Singleton
 class KeywordRepository @Inject constructor(
     private val notionApi: NotionApi,
@@ -28,6 +32,29 @@ class KeywordRepository @Inject constructor(
 
     private suspend fun getDbId(): String {
         return settingsRepository.getKeywordsDbId() ?: throw IllegalStateException("Keywords DB가 초기화되지 않았습니다")
+    }
+
+    /** Returns title to use for Notion page (truncated if long). */
+    private fun buildTitle(text: String): String {
+        return if (text.length > LONG_TEXT_THRESHOLD) {
+            text.take(TITLE_MAX_LENGTH) + "..."
+        } else {
+            text
+        }
+    }
+
+    /** Returns paragraph children blocks for long text, or null for short text. */
+    private fun buildBodyBlocks(text: String): List<NotionBlock>? {
+        return if (text.length > LONG_TEXT_THRESHOLD) {
+            listOf(
+                NotionBlock(
+                    type = "paragraph",
+                    paragraph = NotionParagraphBlock(
+                        richText = listOf(NotionRichText(text = NotionTextContent(text)))
+                    )
+                )
+            )
+        } else null
     }
 
     suspend fun refreshKeywords() {
@@ -55,15 +82,18 @@ class KeywordRepository @Inject constructor(
                 type = type,
                 isResolved = status == "resolved",
                 resolvedDate = resolvedDate,
-                tags = tags
+                tags = tags,
+                createdTime = page.createdTime
             )
         }
     }
 
-    suspend fun addKeyword(text: String, type: String, tags: List<String>): KeywordUiItem {
+    suspend fun addKeyword(text: String, tags: List<String>): KeywordUiItem {
         val auth = getAuth()
         val dbId = getDbId()
         val normalizedTags = TagNormalizer.ensureFreeTopicTag(tags)
+        val pageTitle = buildTitle(text)
+        val bodyBlocks = buildBodyBlocks(text)
 
         val page = notionApi.createPage(
             auth = auth,
@@ -72,11 +102,11 @@ class KeywordRepository @Inject constructor(
                 properties = mapOf(
                     "Title" to NotionPropertyValue(
                         type = "title",
-                        title = listOf(NotionRichText(text = NotionTextContent(text)))
+                        title = listOf(NotionRichText(text = NotionTextContent(pageTitle)))
                     ),
                     "Type" to NotionPropertyValue(
                         type = "select",
-                        select = NotionSelectValue(type)
+                        select = NotionSelectValue("keyword")
                     ),
                     "Status" to NotionPropertyValue(
                         type = "select",
@@ -86,17 +116,19 @@ class KeywordRepository @Inject constructor(
                         type = "multi_select",
                         multiSelect = normalizedTags.map { NotionMultiSelectValue(name = it) }
                     )
-                )
+                ),
+                children = bodyBlocks
             )
         )
 
         val newItem = KeywordUiItem(
             id = page.id,
-            title = text,
-            type = type,
+            title = pageTitle,
+            type = "keyword",
             isResolved = false,
             resolvedDate = null,
-            tags = normalizedTags
+            tags = normalizedTags,
+            createdTime = page.createdTime
         )
 
         refreshKeywords()
@@ -181,6 +213,63 @@ class KeywordRepository @Inject constructor(
 
         response.results.forEach { page ->
             notionApi.deleteBlock(auth = auth, blockId = page.id)
+        }
+
+        refreshKeywords()
+    }
+
+    /** Returns all known tags: union of tags from all keywords plus tags stored in SettingsRepository. */
+    suspend fun getAllTags(): Set<String> {
+        val fromKeywords = _keywords.value.flatMap { it.tags }.toSet()
+        val fromSettings = settingsRepository.get(KEY_ALL_TAGS)
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.toSet()
+            ?: emptySet()
+        return fromKeywords + fromSettings
+    }
+
+    /** Persists a new tag name to SettingsRepository so it appears even before any keyword uses it. */
+    suspend fun persistTag(tag: String) {
+        val existing = settingsRepository.get(KEY_ALL_TAGS)
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.toMutableSet()
+            ?: mutableSetOf()
+        existing.add(tag.trim())
+        settingsRepository.set(KEY_ALL_TAGS, existing.joinToString(","))
+    }
+
+    /** Removes a tag from SettingsRepository and patches all keywords that have it. */
+    suspend fun removeTagFromAllKeywords(tag: String) {
+        val auth = getAuth()
+
+        // Remove from persisted settings
+        val existing = settingsRepository.get(KEY_ALL_TAGS)
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() && it != tag }
+            ?: emptyList()
+        settingsRepository.set(KEY_ALL_TAGS, existing.joinToString(","))
+
+        // Patch keywords in Notion that contain this tag
+        val affected = _keywords.value.filter { tag in it.tags }
+        affected.forEach { keyword ->
+            val updatedTags = keyword.tags.filter { it != tag }
+            notionApi.updatePage(
+                auth = auth,
+                pageId = keyword.id,
+                request = UpdatePageRequest(
+                    properties = mapOf(
+                        "Tags" to NotionPropertyValue(
+                            type = "multi_select",
+                            multiSelect = updatedTags.map { NotionMultiSelectValue(name = it) }
+                        )
+                    )
+                )
+            )
         }
 
         refreshKeywords()

@@ -22,19 +22,16 @@ class TopicRepository @Inject constructor(
         return settingsRepository.getTopicsDbId() ?: throw IllegalStateException("Topics DB 미초기화")
     }
 
-    suspend fun getTodayTopics(): List<TopicUiItem> {
+    suspend fun getTopics(): List<TopicUiItem> {
         val auth = getAuth()
         val dbId = getDbId()
-        val today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
 
         val response = notionApi.queryDatabase(
             auth = auth,
             databaseId = dbId,
             request = NotionQueryRequest(
-                filter = NotionFilter(
-                    property = "Date",
-                    date = NotionDateFilter(equals = today)
-                )
+                sorts = listOf(NotionSort(property = "Date", direction = "descending")),
+                pageSize = 100
             )
         )
 
@@ -128,6 +125,38 @@ class TopicRepository @Inject constructor(
                 tags = page.properties["Tags"]?.multiSelect?.mapNotNull { it.name } ?: emptyList()
             )
         }
+    }
+
+    /**
+     * Returns the single most recent topic that has not been consumed yet.
+     * Returns null if no pending topic exists.
+     */
+    suspend fun getLatestPendingTopic(): TopicUiItem? {
+        val auth = getAuth()
+        val dbId = getDbId()
+
+        val response = notionApi.queryDatabase(
+            auth = auth,
+            databaseId = dbId,
+            request = NotionQueryRequest(
+                filter = NotionFilter(
+                    property = "Status",
+                    select = NotionSelectFilter(doesNotEqual = "consumed")
+                ),
+                sorts = listOf(NotionSort(property = "Date", direction = "descending")),
+                pageSize = 1
+            )
+        )
+
+        val page = response.results.firstOrNull() ?: return null
+        return TopicUiItem(
+            id = page.id,
+            title = page.properties["Title"]?.title?.firstOrNull()?.text?.content ?: "",
+            priorityType = page.properties["Priority Type"]?.select?.name ?: "direct",
+            sourceKeywords = page.properties["Source Keywords"]?.relation?.map { it.id } ?: emptyList(),
+            status = page.properties["Status"]?.select?.name ?: "selected",
+            tags = page.properties["Tags"]?.multiSelect?.mapNotNull { it.name } ?: emptyList()
+        )
     }
 
     suspend fun markTopicsConsumed(ids: List<String>) {

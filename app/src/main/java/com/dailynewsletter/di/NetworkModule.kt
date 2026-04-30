@@ -3,6 +3,7 @@ package com.dailynewsletter.di
 import com.dailynewsletter.BuildConfig
 import com.dailynewsletter.data.remote.gemini.GeminiApi
 import com.dailynewsletter.data.remote.notion.NotionApi
+import com.dailynewsletter.data.remote.wikimedia.WikimediaApi
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -64,4 +65,14 @@ object NetworkModule {
     @Singleton
     fun provideGeminiApi(@Named("gemini") retrofit: Retrofit): GeminiApi =
         retrofit.create(GeminiApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideWikimediaApi(client: OkHttpClient): WikimediaApi =
+        Retrofit.Builder()
+            .baseUrl("https://commons.wikimedia.org/w/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(WikimediaApi::class.java)
 }

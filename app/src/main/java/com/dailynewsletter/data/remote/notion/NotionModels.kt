@@ -161,7 +161,21 @@ data class NotionBlock(
     val heading_1: NotionHeadingBlock? = null,
     val heading_2: NotionHeadingBlock? = null,
     val heading_3: NotionHeadingBlock? = null,
-    val bulleted_list_item: NotionListItemBlock? = null
+    val bulleted_list_item: NotionListItemBlock? = null,
+    val code: NotionCodeBlock? = null,
+    val image: NotionImageBlock? = null
+)
+
+data class NotionImageBlock(
+    val type: String = "external",
+    val external: NotionImageExternal
+)
+
+data class NotionImageExternal(val url: String)
+
+data class NotionCodeBlock(
+    @SerializedName("rich_text") val richText: List<NotionRichText>,
+    val language: String = "plain text"
 )
 
 data class NotionParagraphBlock(

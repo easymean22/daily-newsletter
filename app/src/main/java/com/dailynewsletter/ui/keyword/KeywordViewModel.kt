@@ -21,7 +21,8 @@ data class KeywordUiItem(
     val type: String,
     val isResolved: Boolean,
     val resolvedDate: String? = null,
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    val createdTime: String? = null
 )
 
 sealed class AutoGenStatus {
@@ -36,7 +37,9 @@ data class KeywordUiState(
     val filter: String = "all",
     val isLoading: Boolean = false,
     val error: String? = null,
-    val autoGenStatus: AutoGenStatus = AutoGenStatus.Idle
+    val autoGenStatus: AutoGenStatus = AutoGenStatus.Idle,
+    val availableTags: Set<String> = emptySet(),
+    val selectedTagFilter: String? = null
 )
 
 @HiltViewModel
@@ -65,6 +68,7 @@ class KeywordViewModel @Inject constructor(
                 .onFailure { e ->
                     _uiState.update { it.copy(error = e.message ?: "키워드 로드에 실패했습니다") }
                 }
+            loadTags()
             combine(keywordRepository.observeKeywords(), _filter) { keywords, filter ->
                 val filtered = when (filter) {
                     "pending" -> keywords.filter { !it.isResolved }
@@ -73,51 +77,60 @@ class KeywordViewModel @Inject constructor(
                 }
                 Pair(filtered, filter)
             }.collect { (filtered, filter) ->
-                // Preserve autoGenStatus so snackbar is not lost when keyword list refreshes.
                 _uiState.update { current ->
-                    current.copy(keywords = filtered, filter = filter, isLoading = false)
+                    val tagFilter = current.selectedTagFilter
+                    val tagFiltered = if (tagFilter != null) {
+                        filtered.filter { tagFilter in it.tags }
+                    } else filtered
+                    current.copy(keywords = tagFiltered, filter = filter, isLoading = false)
                 }
             }
         }
     }
 
-    fun addKeyword(text: String, type: String, tags: List<String> = emptyList()) {
+    fun loadTags() {
         viewModelScope.launch(exceptionHandler) {
-            // Step 1: add keyword — failure aborts auto-gen too
-            val newKeyword = try {
-                keywordRepository.addKeyword(text, type, tags)
+            val tags = keywordRepository.getAllTags()
+            _uiState.update { it.copy(availableTags = tags) }
+        }
+    }
+
+    fun addKeyword(text: String, tags: List<String> = emptyList()) {
+        viewModelScope.launch(exceptionHandler) {
+            try {
+                keywordRepository.addKeyword(text, tags)
+                loadTags()
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message) }
-                return@launch
             }
+        }
+    }
 
-            // Step 2: auto topic generation (Q1: immediate, no debounce)
-            _uiState.update { it.copy(autoGenStatus = AutoGenStatus.Running) }
-            runCatching {
-                val pending = keywordRepository.getPendingKeywords()
-                val past = topicRepository.getAllPastTopicTitles()
-                val suggested = geminiTopicSuggester.suggest(
-                    pendingKeywords = pending,
-                    pastTopicTitles = past
+    fun selectTagFilter(tag: String?) {
+        _uiState.update { it.copy(selectedTagFilter = tag) }
+        // Re-apply filtering by reloading from cached flow
+        viewModelScope.launch(exceptionHandler) {
+            keywordRepository.refreshKeywords()
+        }
+    }
+
+    fun addNewTag(tag: String) {
+        val trimmed = tag.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch(exceptionHandler) {
+            keywordRepository.persistTag(trimmed)
+            _uiState.update { it.copy(availableTags = it.availableTags + trimmed) }
+        }
+    }
+
+    fun removeTag(tag: String) {
+        viewModelScope.launch(exceptionHandler) {
+            keywordRepository.removeTagFromAllKeywords(tag)
+            _uiState.update { current ->
+                current.copy(
+                    availableTags = current.availableTags - tag,
+                    selectedTagFilter = if (current.selectedTagFilter == tag) null else current.selectedTagFilter
                 )
-                suggested.forEach { topic ->
-                    // Q5: all paths use default tag = 모든주제 alone — pass emptyList(), invariant fills it.
-                    topicRepository.saveTopic(
-                        title = topic.title,
-                        priorityType = topic.priorityType,
-                        sourceKeywordIds = topic.sourceKeywordIds,
-                        tags = emptyList()
-                    )
-                }
-                suggested.size
-            }.onSuccess { n ->
-                _uiState.update { it.copy(autoGenStatus = AutoGenStatus.Success(n)) }
-            }.onFailure { e ->
-                val msg = when {
-                    e.message?.contains("API Key") == true -> "Gemini API 키를 먼저 설정해주세요"
-                    else -> e.message ?: "자동 주제 생성에 실패했습니다"
-                }
-                _uiState.update { it.copy(autoGenStatus = AutoGenStatus.Failed(msg)) }
             }
         }
     }
